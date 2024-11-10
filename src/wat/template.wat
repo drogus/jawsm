@@ -1,4 +1,4 @@
-(module
+(module $mod
   (type (func (param i32)))
   (type (func (param anyref)))
   (type $write_type (func (param i32 i32 i32 i32) (result i32)))
@@ -2763,6 +2763,8 @@
     (i32.const 0)
   )
 
+  (func $dupa)
+
   (func $start
     call $outer_init
     call $proc_exit
@@ -2771,4 +2773,5 @@
   (export "wasi:cli/run@0.2.1#run" (func $outer_init))
   (export "_start" (func $start))
   (export "main_loop" (func $main_loop))
+  (export "dupa" (func $dupa))
 )
