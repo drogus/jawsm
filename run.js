@@ -129,10 +129,12 @@ const importObject = {
   let bytes;
   if (typeof process !== "undefined") {
     const fs = require("node:fs");
-    const path = process.argv[2];
+    const path = process.argv[2] || "out.wasm";
     bytes = fs.readFileSync(path, { encoding: null });
+  } else if (typeof read !== "undefined") {
+    bytes = read("wasm/generated.wasm", "binary");
   } else {
-    const response = await fetch("wasm/generated.wasm");
+    const response = await fetch("out.wasm");
     bytes = await response.arrayBuffer();
   }
   let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });

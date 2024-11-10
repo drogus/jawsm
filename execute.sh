@@ -15,17 +15,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Set JAWS_DIR only if JAWS_DIR is not already set
-: ${JAWS_DIR:=.}
+# Set JAWSM_DIR only if JAWSM_DIR is not already set
+: ${JAWSM_DIR:=.}
 
 # Determine how to run the compiler
 if [ $CARGO_RUN -eq 1 ]; then
   COMPILER="cargo run"
 else
-  if [ -n "$JAWS_BINARY" ]; then
-    COMPILER="$JAWS_BINARY"
+  if [ -n "$JAWSM_BINARY" ]; then
+    COMPILER="$JAWSM_BINARY"
   else
-    COMPILER="$JAWS_DIR/target/release/jaws"
+    COMPILER="$JAWSM_DIR/target/release/jawsm"
   fi
 fi
 
@@ -35,14 +35,14 @@ if ! cat $1 | $COMPILER; then
 fi
 
 generate_wasm() {
-  wasm-tools parse $JAWS_DIR/wat/generated.wat -o $JAWS_DIR/wasm/generated.wasm
+  wasm-tools parse $JAWSM_DIR/wat/generated.wat -o $JAWSM_DIR/wasm/generated.wasm
   # && \
-  #   wasm-tools component embed --all-features $JAWS_DIR/wit --world jaws $JAWS_DIR/wat/generated.wat -t -o wasm/generated.core.wasm && \
-  #   wasm-tools component new $JAWS_DIR/wasm/generated.core.wasm -o $JAWS_DIR/wasm/generated.component.wasm
+  #   wasm-tools component embed --all-features $JAWSM_DIR/wit --world jawsm $JAWSM_DIR/wat/generated.wat -t -o wasm/generated.core.wasm && \
+  #   wasm-tools component new $JAWSM_DIR/wasm/generated.core.wasm -o $JAWSM_DIR/wasm/generated.component.wasm
 }
 
 run_wasm() {
-  node run.js $JAWS_DIR/wasm/generated.wasm
+  node run.js $JAWSM_DIR/wasm/generated.wasm
 }
 
 # Convert WAT to WASM

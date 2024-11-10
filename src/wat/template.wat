@@ -1,4 +1,4 @@
-(module
+(module $mod
   (type (func (param i32)))
   (type (func (param anyref)))
   (type $write_type (func (param i32 i32 i32 i32) (result i32)))
