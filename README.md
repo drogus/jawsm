@@ -125,6 +125,11 @@ call(f);
 
 All of the helpers needed to make it work are hand written in WAT format. I have some ideas on how to make it more efficient, but before I can validate all the major features I didn't want to invest too much time into side quests. Writing WAT by hand is not that hard, too, especially when you consider WASM GC.
 
+### Sponsors
+
+While working on this project I have received support on GitHub Sponsors by [the
+following people](BACKERS.md). Thank you for all the support!
+
 ### License
 
 The code is licensed under Apache 2.0 license
