@@ -35,7 +35,9 @@ use std::{
 
 mod wat_ast;
 mod wat_template;
-use wat_ast::{WatFunction, WatInstruction as W, WatModule};
+use jawsm::remove_lists_transformer::RemoveListsTransformer;
+use jawsm::tail_call_transformer::TailCallTransformer;
+use jawsm::wat_ast::{WatFunction, WatInstruction as W, WatModule};
 
 enum VarType {
     Const,
@@ -1394,8 +1396,12 @@ fn main() -> anyhow::Result<()> {
         W::local_set("$scope"),
     ]));
 
+    let module = translator.module.clone();
+    let module = RemoveListsTransformer::new(module).transform();
+    let module = TailCallTransformer::new(module).transform();
+
     // Generate the full WAT module
-    let module = translator.module.to_string();
+    let module = module.to_string();
 
     // Generate the full WAT module using the template
     let module = wat_template::generate_wat_template(

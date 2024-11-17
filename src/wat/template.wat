@@ -1526,7 +1526,7 @@
       )
     )
 
-    (call_ref $JSFunc
+    (return_call_ref $JSFunc
       (struct.get $Function $scope (local.get $function))
       (local.get $current_this)
       (local.get $arguments)
