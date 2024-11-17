@@ -20,7 +20,6 @@ pub enum WatInstruction {
     },
     Call {
         name: String,
-        args: Vec<Box<WatInstruction>>,
     },
     I32Const {
         value: i32,
@@ -110,11 +109,8 @@ impl WatInstruction {
         Box::new(Self::LocalTee(name.into()))
     }
 
-    pub fn call(name: impl Into<String>, args: Vec<Box<WatInstruction>>) -> Box<Self> {
-        Box::new(Self::Call {
-            name: name.into(),
-            args,
-        })
+    pub fn call(name: impl Into<String>) -> Box<Self> {
+        Box::new(Self::Call { name: name.into() })
     }
 
     pub fn i32_const(value: i32) -> Box<Self> {
@@ -252,13 +248,7 @@ impl fmt::Display for WatInstruction {
             WatInstruction::GlobalGet { name } => write!(f, "(global.get {})", name),
             WatInstruction::LocalGet { name } => write!(f, "(local.get {})", name),
             WatInstruction::LocalSet { name } => write!(f, "(local.set {})", name),
-            WatInstruction::Call { name, args } => {
-                write!(f, "(call {}", name)?;
-                for arg in args {
-                    write!(f, " {}", arg)?;
-                }
-                write!(f, ")")
-            }
+            WatInstruction::Call { name } => writeln!(f, "(call {})", name),
             WatInstruction::I32Const { value } => write!(f, "(i32.const {})", value),
             WatInstruction::F64Const { value } => write!(f, "(f64.const {})", value),
             WatInstruction::StructNew { name } => write!(f, "(struct.new {})", name),
