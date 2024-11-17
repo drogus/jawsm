@@ -5,6 +5,7 @@ use boa_ast::statement::LabelledItem;
 
 #[derive(Debug, Clone)]
 pub enum WatInstruction {
+    Nop,
     Local {
         name: String,
         type_: String,
@@ -47,6 +48,7 @@ pub enum WatInstruction {
         name: String,
     },
     Return,
+    ReturnCall(String),
     Block {
         label: String,
         instructions: Vec<Box<WatInstruction>>,
@@ -155,6 +157,10 @@ impl WatInstruction {
         Box::new(Self::Return)
     }
 
+    pub fn return_call(name: impl Into<String>) -> Box<Self> {
+        Box::new(Self::ReturnCall(name.into()))
+    }
+
     pub fn block(label: impl Into<String>, instructions: Vec<Box<WatInstruction>>) -> Box<Self> {
         Box::new(Self::Block {
             label: label.into(),
@@ -239,11 +245,24 @@ impl WatInstruction {
     pub fn catch(label: impl Into<String>, instr: Box<Self>) -> Box<Self> {
         Box::new(Self::Catch(label.into(), instr))
     }
+
+    pub fn is_list(&self) -> bool {
+        matches!(self, Self::List { .. })
+    }
+
+    pub fn is_return(&self) -> bool {
+        matches!(self, Self::Return)
+    }
+
+    pub fn is_call(&self) -> bool {
+        matches!(self, Self::Call { .. })
+    }
 }
 
 impl fmt::Display for WatInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            WatInstruction::Nop => Ok(()),
             WatInstruction::Local { name, type_ } => write!(f, "(local {} {})", name, type_),
             WatInstruction::GlobalGet { name } => write!(f, "(global.get {})", name),
             WatInstruction::LocalGet { name } => write!(f, "(local.get {})", name),
@@ -258,6 +277,7 @@ impl fmt::Display for WatInstruction {
             WatInstruction::RefNull { type_ } => write!(f, "(ref.null {})", type_),
             WatInstruction::RefFunc { name } => write!(f, "(ref.func ${})", name),
             WatInstruction::Return => write!(f, "return"),
+            WatInstruction::ReturnCall(name) => write!(f, "(return_call {name})"),
             WatInstruction::Block {
                 label,
                 instructions,
@@ -425,14 +445,13 @@ impl fmt::Display for WatFunction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WatModule {
     pub types: HashMap<String, Vec<String>>,
     pub imports: Vec<(String, String, String)>,
     pub functions: Vec<WatFunction>,
     pub exports: Vec<(String, String)>,
     pub globals: Vec<(String, String, WatInstruction)>,
-    pub identifiers: HashMap<usize, String>,
 }
 
 impl WatModule {
@@ -443,7 +462,6 @@ impl WatModule {
             functions: Vec::new(),
             exports: Vec::new(),
             globals: Vec::new(),
-            identifiers: HashMap::new(),
         }
     }
 
@@ -453,10 +471,6 @@ impl WatModule {
 
     pub fn get_function_mut(&mut self, name: &str) -> Option<&mut WatFunction> {
         self.functions.iter_mut().find(|f| f.name == name)
-    }
-
-    pub fn add_identifier(&mut self, identifier: usize, value: impl Into<String>) {
-        self.identifiers.insert(identifier, value.into());
     }
 }
 
