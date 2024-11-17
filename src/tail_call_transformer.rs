@@ -22,6 +22,13 @@ impl TailCallTransformer {
     }
 }
 
+// TODO: at the moment it's a very simplistic check for tail calls, in the future it
+// would be nice to handle more complex cases, like
+//
+// function foo(n) {
+//   let ret = foo(n - 1);
+//   return ret;
+// }
 fn transform_function(function: &mut WatFunction) {
     if function.results.is_empty() {
         return;

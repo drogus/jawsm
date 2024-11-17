@@ -1557,7 +1557,7 @@
             (struct.get $Number $value (local.get $num2))
           )
         )
-        (return (call $new_number (local.get $result)))
+        (return_call $new_number (local.get $result))
       )
     )
 
@@ -1614,7 +1614,7 @@
             (struct.get $Number 0 (local.get $num2))
           )
         )
-        (return (call $new_number (local.get $result)))
+        (return_call $new_number (local.get $result))
       )
     )
     (ref.null any)
@@ -1637,7 +1637,7 @@
             (struct.get $Number 0 (local.get $num2))
           )
         )
-        (return (call $new_number (local.get $result)))
+        (return_call $new_number (local.get $result))
       )
     )
     (ref.null any)
@@ -1783,7 +1783,7 @@
   (func $type_of (param $arg anyref) (result (ref $StaticString))
     (if (ref.test nullref (local.get $arg))
       (then
-        (return (call $new_static_string (i32.const {{ data(str="undefined") }}) (i32.const {{ data_length() }})))
+        (return_call $new_static_string (i32.const {{ data(str="undefined") }}) (i32.const {{ data_length() }}))
       )
     )
 
@@ -1793,10 +1793,10 @@
               (i32.eq (i31.get_s (ref.cast (ref null i31) (local.get $arg))) (i32.const 0))
               (i32.eq (i31.get_s (ref.cast (ref null i31) (local.get $arg))) (i32.const 1)))
           (then
-            (return (call $new_static_string (i32.const {{ data(str="boolean") }}) (i32.const {{ data_length() }})))
+            (return_call $new_static_string (i32.const {{ data(str="boolean") }}) (i32.const {{ data_length() }}))
           )
           (else
-            (return (call $new_static_string (i32.const {{ data(str="undefined") }}) (i32.const {{ data_length() }})))
+            (return_call $new_static_string (i32.const {{ data(str="undefined") }}) (i32.const {{ data_length() }}))
           )
         )
       )
@@ -1804,27 +1804,27 @@
 
     (if (ref.test (ref $Number) (local.get $arg))
       (then
-        (return (call $new_static_string (i32.const {{ data(str="number") }}) (i32.const {{ data_length() }}))))
+        (return_call $new_static_string (i32.const {{ data(str="number") }}) (i32.const {{ data_length() }})))
     )
 
     (if (i32.or 
           (ref.test (ref $Object) (local.get $arg))
           (ref.test (ref $Promise) (local.get $arg)))
       (then
-        (return (call $new_static_string (i32.const {{ data(str="object") }}) (i32.const {{ data_length() }}))))
+        (return_call $new_static_string (i32.const {{ data(str="object") }}) (i32.const {{ data_length() }})))
     )
 
     (if (ref.test (ref $StaticString) (local.get $arg))
       (then
-        (return (call $new_static_string (i32.const {{ data(str="string") }}) (i32.const {{ data_length() }}))))
+        (return_call $new_static_string (i32.const {{ data(str="string") }}) (i32.const {{ data_length() }})))
     )
 
     (if (ref.test (ref $Function) (local.get $arg))
       (then
-        (return (call $new_static_string (i32.const {{ data(str="function") }}) (i32.const {{ data_length() }}))))
+        (return_call $new_static_string (i32.const {{ data(str="function") }}) (i32.const {{ data_length() }})))
     )
 
-    (return (call $new_static_string (i32.const {{ data(str="undefined") }}) (i32.const {{ data_length() }})))
+    (return_call $new_static_string (i32.const {{ data(str="undefined") }}) (i32.const {{ data_length() }}))
   )
 
   (func $less_than (param $arg1 anyref) (param $arg2 anyref) (result i31ref)
@@ -1886,7 +1886,7 @@
             (f64.const 1)
           )
         )
-        (return (call $new_number (local.get $result)))
+        (return_call $new_number (local.get $result))
       )
     )
     (ref.null any)
@@ -1906,7 +1906,7 @@
             (f64.const 1)
           )
         )
-        (return (call $new_number (local.get $result)))
+        (return_call $new_number (local.get $result))
       )
     )
     (ref.null any)
