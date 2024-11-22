@@ -29,6 +29,9 @@ else
   fi
 fi
 
+# Create needed directories, if needed
+mkdir --parents $JAWSM_DIR/wat $JAWSM_DIR/wasm
+
 # Run the compiler
 if ! cat $1 | $COMPILER; then
   exit 100
