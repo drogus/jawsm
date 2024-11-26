@@ -14,7 +14,7 @@ I believe that with modern WASM proposals it is possible to implement 100% of Ja
 If you want to see it happen, please consider [sponsoring my work](https://github.com/sponsors/drogus)
 ### What works
 
-As I eventually want to implment 100% of the language, I'm purposefully focused on implementing the semantics first, rather than go for 100% of builtins and grammar as I want to be 100% sure it's doable.
+As I eventually want to implement 100% of the language, I'm purposefully focused on implementing the semantics first, rather than go for 100% of builtins and grammar as I want to be 100% sure it's doable.
 
 I have a list of 4 things that I think are hard to implement and after I implement all of them I will focus on more grammar and builtins. These are:
 
