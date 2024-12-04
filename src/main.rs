@@ -420,7 +420,7 @@ impl WasmTranslator {
             BinaryOp::Bitwise(_bitwise_op) => todo!(),
             BinaryOp::Relational(relational_op) => {
                 let func_name = match relational_op {
-                    RelationalOp::Equal => todo!(),
+                    RelationalOp::Equal => "$loose_equal",
                     RelationalOp::NotEqual => todo!(),
                     RelationalOp::StrictEqual => "$strict_equal",
                     RelationalOp::StrictNotEqual => "$strict_not_equal",
