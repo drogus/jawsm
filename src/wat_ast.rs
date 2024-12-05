@@ -3,6 +3,8 @@ use std::fmt::{self, write};
 
 use boa_ast::statement::LabelledItem;
 
+pub type InstructionsList = Vec<Box<WatInstruction>>;
+
 #[derive(Debug, Clone)]
 pub enum WatInstruction {
     Nop,
@@ -51,27 +53,24 @@ pub enum WatInstruction {
     ReturnCall(String),
     Block {
         label: String,
-        instructions: Vec<Box<WatInstruction>>,
+        instructions: InstructionsList,
     },
     Loop {
         label: String,
-        instructions: Vec<Box<WatInstruction>>,
+        instructions: InstructionsList,
     },
     If {
         condition: Option<Box<WatInstruction>>,
-        then: Vec<Box<WatInstruction>>,
-        r#else: Option<Vec<Box<WatInstruction>>>,
+        then: InstructionsList,
+        r#else: Option<InstructionsList>,
     },
     BrIf(String),
     Br(String),
     Instruction {
         name: String,
-        args: Vec<Box<WatInstruction>>,
+        args: InstructionsList,
     },
     Empty,
-    List {
-        instructions: Vec<Box<WatInstruction>>,
-    },
     Log,
     Identifier(String),
     Drop,
@@ -79,11 +78,11 @@ pub enum WatInstruction {
     RefI31(Box<WatInstruction>),
     Throw(String),
     Try {
-        try_block: Box<WatInstruction>,
-        catches: Vec<Box<WatInstruction>>,
-        catch_all: Option<Box<WatInstruction>>,
+        try_block: InstructionsList,
+        catches: Vec<InstructionsList>,
+        catch_all: Option<InstructionsList>,
     },
-    Catch(String, Box<WatInstruction>),
+    Catch(String, InstructionsList),
     CatchAll(Box<WatInstruction>),
 }
 
@@ -161,14 +160,14 @@ impl WatInstruction {
         Box::new(Self::ReturnCall(name.into()))
     }
 
-    pub fn block(label: impl Into<String>, instructions: Vec<Box<WatInstruction>>) -> Box<Self> {
+    pub fn block(label: impl Into<String>, instructions: InstructionsList) -> Box<Self> {
         Box::new(Self::Block {
             label: label.into(),
             instructions,
         })
     }
 
-    pub fn r#loop(label: String, instructions: Vec<Box<WatInstruction>>) -> Box<Self> {
+    pub fn r#loop(label: String, instructions: InstructionsList) -> Box<Self> {
         Box::new(Self::Loop {
             label,
             instructions,
@@ -177,8 +176,8 @@ impl WatInstruction {
 
     pub fn r#if(
         condition: Option<Box<WatInstruction>>,
-        then: Vec<Box<WatInstruction>>,
-        r#else: Option<Vec<Box<WatInstruction>>>,
+        then: InstructionsList,
+        r#else: Option<InstructionsList>,
     ) -> Box<Self> {
         Box::new(Self::If {
             condition,
@@ -195,7 +194,7 @@ impl WatInstruction {
         Box::new(Self::Br(label.into()))
     }
 
-    pub fn instruction(name: impl Into<String>, args: Vec<Box<WatInstruction>>) -> Box<Self> {
+    pub fn instruction(name: impl Into<String>, args: InstructionsList) -> Box<Self> {
         Box::new(Self::Instruction {
             name: name.into(),
             args,
@@ -204,10 +203,6 @@ impl WatInstruction {
 
     pub fn empty() -> Box<Self> {
         Box::new(Self::Empty)
-    }
-
-    pub fn list(instructions: Vec<Box<WatInstruction>>) -> Box<Self> {
-        Box::new(Self::List { instructions })
     }
 
     pub fn drop() -> Box<Self> {
@@ -231,9 +226,9 @@ impl WatInstruction {
     }
 
     pub fn r#try(
-        try_block: Box<Self>,
-        catches: Vec<Box<Self>>,
-        catch_all: Option<Box<Self>>,
+        try_block: InstructionsList,
+        catches: Vec<InstructionsList>,
+        catch_all: Option<InstructionsList>,
     ) -> Box<Self> {
         Box::new(Self::Try {
             try_block,
@@ -242,12 +237,8 @@ impl WatInstruction {
         })
     }
 
-    pub fn catch(label: impl Into<String>, instr: Box<Self>) -> Box<Self> {
-        Box::new(Self::Catch(label.into(), instr))
-    }
-
-    pub fn is_list(&self) -> bool {
-        matches!(self, Self::List { .. })
+    pub fn catch(label: impl Into<String>, instr: InstructionsList) -> InstructionsList {
+        vec![Box::new(Self::Catch(label.into(), instr))]
     }
 
     pub fn is_return(&self) -> bool {
@@ -333,12 +324,6 @@ impl fmt::Display for WatInstruction {
             }
             WatInstruction::Type { name } => write!(f, "{}", name),
             WatInstruction::Empty => Ok(()),
-            WatInstruction::List { instructions } => {
-                for instruction in instructions {
-                    writeln!(f, "{}", instruction)?;
-                }
-                Ok(())
-            }
             WatInstruction::Log => {
                 writeln!(f, "(call $log)")
             }
@@ -354,21 +339,41 @@ impl fmt::Display for WatInstruction {
                 catches,
                 catch_all,
             } => {
+                let try_block_str = try_block
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join("");
                 writeln!(
                     f,
-                    "\ntry\n{try_block}{}{}\nend",
+                    "\ntry\n{try_block_str}{}{}\nend",
                     catches
                         .iter()
-                        .map(|c| c.to_string())
+                        .map(|c| c
+                            .iter()
+                            .map(|i| i.to_string())
+                            .collect::<Vec<String>>()
+                            .join(""))
                         .collect::<Vec<String>>()
                         .join(""),
                     catch_all
                         .clone()
-                        .map(|c| c.to_string())
+                        .map(|c| c
+                            .iter()
+                            .map(|i| i.to_string())
+                            .collect::<Vec<String>>()
+                            .join(""))
                         .unwrap_or("".to_string())
                 )
             }
-            WatInstruction::Catch(label, instr) => writeln!(f, "\ncatch {label}\n{instr}"),
+            WatInstruction::Catch(label, instr) => {
+                let instr_str = instr
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join("");
+                writeln!(f, "\ncatch {label}\n{instr_str}")
+            }
             WatInstruction::CatchAll(instr) => writeln!(f, "\ncatch_all\n{instr}"),
         }
     }
@@ -417,11 +422,17 @@ impl WatFunction {
         let name = format!("{name}-{counter}");
         self.locals.insert(name.clone(), r#type);
 
-        return name;
+        name
     }
 
     pub fn add_instruction(&mut self, instruction: Box<WatInstruction>) {
         self.body.push_back(instruction);
+    }
+
+    pub fn add_instructions(&mut self, instructions: InstructionsList) {
+        for instruction in instructions {
+            self.body.push_back(instruction);
+        }
     }
 }
 
