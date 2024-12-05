@@ -1,4 +1,4 @@
-use crate::wat_ast::{WatFunction, WatInstruction, WatModule};
+use tarnik_ast::{WatFunction, WatInstruction, WatModule};
 
 pub struct TailCallTransformer {
     module: WatModule,
@@ -30,7 +30,7 @@ impl TailCallTransformer {
 //   return ret;
 // }
 fn transform_function(function: &mut WatFunction) {
-    if function.results.is_empty() {
+    if !function.has_results() {
         return;
     }
 
@@ -38,8 +38,8 @@ fn transform_function(function: &mut WatFunction) {
     while i < function.body.len() {
         if function.body[i].is_return() && i > 0 && function.body[i - 1].is_call() {
             // replace the call instruction with nop
-            let call = std::mem::replace(&mut function.body[i - 1], Box::new(WatInstruction::Nop));
-            if let WatInstruction::Call { name } = *call {
+            let call = std::mem::replace(&mut function.body[i - 1], WatInstruction::Nop);
+            if let WatInstruction::Call(name) = call {
                 // replace return with return_call
                 let _ =
                     std::mem::replace(&mut function.body[i], WatInstruction::r#return_call(name));

@@ -1014,7 +1014,6 @@ dependencies = [
 [[package]]
 name = "tarnik-ast"
 version = "0.1.0"
-source = "git+https://github.com/drogus/tarnik#5681928314bb6dcab3925be3b3bf9b76cedf0025"
 dependencies = [
  "indexmap 2.6.0",
 ]
