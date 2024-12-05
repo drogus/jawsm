@@ -3,7 +3,7 @@ use std::fmt::{self, write};
 
 use boa_ast::statement::LabelledItem;
 
-pub type InstructionsList = Vec<Box<WatInstruction>>;
+pub type InstructionsList = Vec<WatInstruction>;
 
 #[derive(Debug, Clone)]
 pub enum WatInstruction {
@@ -34,15 +34,22 @@ pub enum WatInstruction {
     StructNew {
         name: String,
     },
+    StructGet {
+        typeidx: String,
+        field_name: String,
+    },
     ArrayNew {
         name: String,
-        init: Box<WatInstruction>,
-        length: Box<WatInstruction>,
     },
-    RefNull {
-        type_: String,
+    ArraySet {
+        name: String,
     },
+    ArrayGet {
+        name: String,
+    },
+    RefNull(String),
     Ref(String),
+    RefCast(String),
     RefFunc {
         name: String,
     },
@@ -66,10 +73,6 @@ pub enum WatInstruction {
     },
     BrIf(String),
     Br(String),
-    Instruction {
-        name: String,
-        args: InstructionsList,
-    },
     Empty,
     Log,
     Identifier(String),
@@ -87,158 +90,160 @@ pub enum WatInstruction {
 }
 
 impl WatInstruction {
-    pub fn local(name: impl Into<String>, type_: impl Into<String>) -> Box<Self> {
-        Box::new(Self::Local {
+    pub fn local(name: impl Into<String>, type_: impl Into<String>) -> Self {
+        Self::Local {
             name: name.into(),
             type_: type_.into(),
-        })
+        }
     }
 
-    pub fn global_get(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::GlobalGet { name: name.into() })
+    pub fn global_get(name: impl Into<String>) -> Self {
+        Self::GlobalGet { name: name.into() }
     }
 
-    pub fn local_get(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::LocalGet { name: name.into() })
+    pub fn local_get(name: impl Into<String>) -> Self {
+        Self::LocalGet { name: name.into() }
     }
 
-    pub fn local_set(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::LocalSet { name: name.into() })
+    pub fn local_set(name: impl Into<String>) -> Self {
+        Self::LocalSet { name: name.into() }
     }
 
-    pub fn local_tee(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::LocalTee(name.into()))
+    pub fn local_tee(name: impl Into<String>) -> Self {
+        Self::LocalTee(name.into())
     }
 
-    pub fn call(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::Call { name: name.into() })
+    pub fn call(name: impl Into<String>) -> Self {
+        Self::Call { name: name.into() }
     }
 
-    pub fn i32_const(value: i32) -> Box<Self> {
-        Box::new(Self::I32Const { value })
+    pub fn i32_const(value: i32) -> Self {
+        Self::I32Const { value }
     }
 
-    pub fn f64_const(value: f64) -> Box<Self> {
-        Box::new(Self::F64Const { value })
+    pub fn f64_const(value: f64) -> Self {
+        Self::F64Const { value }
     }
 
-    pub fn struct_new(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::StructNew { name: name.into() })
+    pub fn struct_new(name: impl Into<String>) -> Self {
+        Self::StructNew { name: name.into() }
     }
 
-    pub fn array_new(
-        name: impl Into<String>,
-        init: Box<WatInstruction>,
-        length: Box<WatInstruction>,
-    ) -> Box<Self> {
-        Box::new(Self::ArrayNew {
-            name: name.into(),
-            init,
-            length,
-        })
+    pub fn struct_get(typeidx: impl Into<String>, field_name: impl Into<String>) -> Self {
+        Self::StructGet {
+            typeidx: typeidx.into(),
+            field_name: field_name.into(),
+        }
     }
 
-    pub fn ref_null(type_: impl Into<String>) -> Box<Self> {
-        Box::new(Self::RefNull {
-            type_: type_.into(),
-        })
+    pub fn array_new(name: impl Into<String>) -> Self {
+        Self::ArrayNew { name: name.into() }
     }
 
-    pub fn ref_func(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::RefFunc { name: name.into() })
+    pub fn array_set(name: impl Into<String>) -> Self {
+        Self::ArraySet { name: name.into() }
     }
 
-    pub fn type_(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::Type { name: name.into() })
+    pub fn array_get(name: impl Into<String>) -> Self {
+        Self::ArrayGet { name: name.into() }
     }
 
-    pub fn r#return() -> Box<Self> {
-        Box::new(Self::Return)
+    pub fn ref_null(ty: impl Into<String>) -> Self {
+        Self::RefNull(ty.into())
     }
 
-    pub fn return_call(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::ReturnCall(name.into()))
+    pub fn ref_cast(t: impl Into<String>) -> Self {
+        Self::RefCast(t.into())
     }
 
-    pub fn block(label: impl Into<String>, instructions: InstructionsList) -> Box<Self> {
-        Box::new(Self::Block {
+    pub fn ref_func(name: impl Into<String>) -> Self {
+        Self::RefFunc { name: name.into() }
+    }
+
+    pub fn type_(name: impl Into<String>) -> Self {
+        Self::Type { name: name.into() }
+    }
+
+    pub fn r#return() -> Self {
+        Self::Return
+    }
+
+    pub fn return_call(name: impl Into<String>) -> Self {
+        Self::ReturnCall(name.into())
+    }
+
+    pub fn block(label: impl Into<String>, instructions: InstructionsList) -> Self {
+        Self::Block {
             label: label.into(),
             instructions,
-        })
+        }
     }
 
-    pub fn r#loop(label: String, instructions: InstructionsList) -> Box<Self> {
-        Box::new(Self::Loop {
+    pub fn r#loop(label: String, instructions: InstructionsList) -> Self {
+        Self::Loop {
             label,
             instructions,
-        })
+        }
     }
 
     pub fn r#if(
         condition: Option<Box<WatInstruction>>,
         then: InstructionsList,
         r#else: Option<InstructionsList>,
-    ) -> Box<Self> {
-        Box::new(Self::If {
+    ) -> Self {
+        Self::If {
             condition,
             then,
             r#else,
-        })
+        }
     }
 
-    pub fn br_if(label: impl Into<String>) -> Box<Self> {
-        Box::new(Self::BrIf(label.into()))
+    pub fn br_if(label: impl Into<String>) -> Self {
+        Self::BrIf(label.into())
     }
 
-    pub fn br(label: impl Into<String>) -> Box<Self> {
-        Box::new(Self::Br(label.into()))
+    pub fn br(label: impl Into<String>) -> Self {
+        Self::Br(label.into())
     }
 
-    pub fn instruction(name: impl Into<String>, args: InstructionsList) -> Box<Self> {
-        Box::new(Self::Instruction {
-            name: name.into(),
-            args,
-        })
+    pub fn empty() -> Self {
+        Self::Empty
     }
 
-    pub fn empty() -> Box<Self> {
-        Box::new(Self::Empty)
+    pub fn drop() -> Self {
+        Self::Drop
     }
 
-    pub fn drop() -> Box<Self> {
-        Box::new(Self::Drop)
+    pub fn i32_eqz() -> Self {
+        Self::I32Eqz
     }
 
-    pub fn i32_eqz() -> Box<Self> {
-        Box::new(Self::I32Eqz)
+    pub fn ref_i31(instruction: WatInstruction) -> Self {
+        Self::RefI31(Box::new(instruction))
     }
 
-    pub fn ref_i31(instruction: Box<WatInstruction>) -> Box<Self> {
-        Box::new(Self::RefI31(instruction))
+    pub fn throw(label: impl Into<String>) -> Self {
+        Self::Throw(label.into())
     }
 
-    pub fn throw(label: impl Into<String>) -> Box<Self> {
-        Box::new(Self::Throw(label.into()))
-    }
-
-    pub fn r#type(name: impl Into<String>) -> Box<Self> {
-        Box::new(Self::Type { name: name.into() })
+    pub fn r#type(name: impl Into<String>) -> Self {
+        Self::Type { name: name.into() }
     }
 
     pub fn r#try(
         try_block: InstructionsList,
         catches: Vec<InstructionsList>,
         catch_all: Option<InstructionsList>,
-    ) -> Box<Self> {
-        Box::new(Self::Try {
+    ) -> Self {
+        Self::Try {
             try_block,
             catches,
             catch_all,
-        })
+        }
     }
 
     pub fn catch(label: impl Into<String>, instr: InstructionsList) -> InstructionsList {
-        vec![Box::new(Self::Catch(label.into(), instr))]
+        vec![Self::Catch(label.into(), instr)]
     }
 
     pub fn is_return(&self) -> bool {
@@ -262,10 +267,15 @@ impl fmt::Display for WatInstruction {
             WatInstruction::I32Const { value } => write!(f, "(i32.const {})", value),
             WatInstruction::F64Const { value } => write!(f, "(f64.const {})", value),
             WatInstruction::StructNew { name } => write!(f, "(struct.new {})", name),
-            WatInstruction::ArrayNew { name, init, length } => {
-                write!(f, "(array.new {} {} {})", name, init, length)
-            }
-            WatInstruction::RefNull { type_ } => write!(f, "(ref.null {})", type_),
+            WatInstruction::StructGet {
+                typeidx,
+                field_name,
+            } => write!(f, "(struct.get {typeidx} {field_name})"),
+            WatInstruction::ArrayNew { name } => write!(f, "(array.new {name})"),
+            WatInstruction::ArraySet { name } => write!(f, "(array.set {name})"),
+            WatInstruction::ArrayGet { name } => write!(f, "(array.get {name})"),
+            WatInstruction::RefCast(ty) => write!(f, "(ref.cast {})", ty),
+            WatInstruction::RefNull(ty) => write!(f, "(ref.null {})", ty),
             WatInstruction::RefFunc { name } => write!(f, "(ref.func ${})", name),
             WatInstruction::Return => write!(f, "return"),
             WatInstruction::ReturnCall(name) => write!(f, "(return_call {name})"),
@@ -315,13 +325,6 @@ impl fmt::Display for WatInstruction {
             }
             WatInstruction::BrIf(label) => write!(f, "(br_if {})", label),
             WatInstruction::Br(label) => write!(f, "(br {})", label),
-            WatInstruction::Instruction { name, args } => {
-                write!(f, "({}", name)?;
-                for arg in args {
-                    write!(f, " {}", arg)?;
-                }
-                write!(f, ")")
-            }
             WatInstruction::Type { name } => write!(f, "{}", name),
             WatInstruction::Empty => Ok(()),
             WatInstruction::Log => {
@@ -386,7 +389,7 @@ pub struct WatFunction {
     pub results: Vec<String>,
     pub locals: HashMap<String, String>,
     pub locals_counters: HashMap<String, u32>,
-    pub body: VecDeque<Box<WatInstruction>>,
+    pub body: VecDeque<WatInstruction>,
 }
 
 impl WatFunction {
@@ -425,7 +428,7 @@ impl WatFunction {
         name
     }
 
-    pub fn add_instruction(&mut self, instruction: Box<WatInstruction>) {
+    pub fn add_instruction(&mut self, instruction: WatInstruction) {
         self.body.push_back(instruction);
     }
 

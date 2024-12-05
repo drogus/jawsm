@@ -68,11 +68,23 @@ pub fn generate_wat_template(
     init_code: impl Into<String>,
     translator: &mut WasmTranslator,
 ) -> String {
+    // TODO: this is a hack, the new ast generates full module with `(module` start and end
+    // so for now just remove first and last line
+    let mut init_lines: Vec<String> = init_code
+        .into()
+        .split("\n")
+        .skip(1)
+        .map(|s| s.into())
+        .collect();
+    init_lines.pop();
+    init_lines.pop();
+    let init_code = init_lines.join("\n");
+
     let template = std::include_str!("wat/template.wat");
     let mut tera = Tera::default();
     tera.add_raw_template("module", template).unwrap();
     let mut context = Context::new();
-    context.insert("init_code", &init_code.into());
+    context.insert("init_code", &init_code);
     context.insert("data_entries", "");
     context.insert("free_memory_offset", "");
     context.insert("additional_functions", &additional_functions.into());
