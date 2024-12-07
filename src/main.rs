@@ -1291,7 +1291,7 @@ impl WasmTranslator {
         let mut result = vec![];
         result.append(&mut catch_instr);
         result.append(&mut finally_instr);
-        vec![W::catch("$JSException", result)]
+        result
     }
 
     fn translate_try(&mut self, r#try: &Try) -> InstructionsList {
@@ -1300,7 +1300,11 @@ impl WasmTranslator {
         let finally = r#try.finally();
         let instr = self.translate_catch(catch, finally);
 
-        vec![W::r#try(self.translate_block(block), vec![instr], None)]
+        vec![W::r#try(
+            self.translate_block(block),
+            vec![("$JSException".to_string(), instr)],
+            None,
+        )]
     }
 
     fn translate_throw(&mut self, throw: &Throw) -> InstructionsList {
