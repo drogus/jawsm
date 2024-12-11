@@ -1,13 +1,15 @@
+"use strict";
+
 let instance,
   pollables = [],
   pollableIndex = 0;
 
 function sleep(ms) {
-  return new Promise((resolve) =>
+  return new Promise((resolve) => {
     setTimeout(() => {
       resolve();
-    }, Number(ms)),
-  );
+    }, Number(ms));
+  });
 }
 
 class Pollable {
@@ -48,7 +50,7 @@ function findPollable(id) {
 
 const importObject = {
   "wasi:io/poll@0.2.1": {
-    poll: async function (ptr, length, returnPtr) {
+    poll: function (ptr, length, returnPtr) {
       // this is a simplification, ie. arrays do not necessarily take 4 bytes of space
       // per element, but in here I know we deal with i32 values
       const pollableIds = new Uint32Array(
@@ -62,13 +64,13 @@ const importObject = {
         pollablesToWaitFor.push(findPollable(id).getPromise());
       }
 
-      let ready = await Promise.race(pollablesToWaitFor);
+      Promise.race(pollablesToWaitFor).then((ready) => {
+        const dataView = new DataView(instance.exports.memory.buffer);
+        dataView.setInt32(returnPtr, 1, true);
+        dataView.setInt32(returnPtr + 4, ready.getIndex(), true);
 
-      const dataView = new DataView(instance.exports.memory.buffer);
-      dataView.setInt32(returnPtr, 1, true);
-      dataView.setInt32(returnPtr + 4, ready.getIndex(), true);
-
-      instance.exports["main_loop"]();
+        instance.exports["main_loop"]();
+      });
     },
   },
   "wasi:clocks/monotonic-clock@0.2.1": {
@@ -142,8 +144,4 @@ const importObject = {
   const exports = instance.exports;
 
   let result = exports["wasi:cli/run@0.2.1#run"]();
-
-  if (typeof process !== "undefined") {
-    process.exit(result);
-  }
 })();
