@@ -84,18 +84,30 @@ struct WasmTranslator {
 }
 
 impl WasmTranslator {
-    fn new(interner: Interner) -> Self {
-        let module = WatModule::new();
+    fn new(interner: Interner, module: WatModule) -> Self {
         let function = WatFunction::new("init".to_string());
+        let data_offset = module.data_offset as i32;
+        let data_entries = module
+            .data
+            .clone()
+            .into_iter()
+            .map(|(o, s)| (o as i32, s))
+            .collect();
+        let string_offsets = module
+            .data
+            .clone()
+            .into_iter()
+            .map(|(o, s)| (s, o as i32))
+            .collect();
         Self {
             module,
             function_stack: vec![function],
             interner,
             functions: HashMap::new(),
             init_code: Vec::new(),
-            data_entries: HashMap::new(),
-            string_offsets: HashMap::new(),
-            data_offset: 300,
+            data_entries,
+            string_offsets,
+            data_offset: data_offset + 4,
             identifiers_map: HashMap::new(),
             current_block_number: 0,
         }
@@ -151,7 +163,6 @@ impl WasmTranslator {
     }
 
     fn translate_return(&mut self, ret: &Return) -> InstructionsList {
-        // println!("Return: {ret:#?}");
         let mut instructions = Vec::new();
         if let Some(target) = ret.target() {
             instructions.append(&mut self.translate_expression(target, true));
@@ -306,7 +317,7 @@ impl WasmTranslator {
                 instructions.append(&mut vec![
                     W::local_get(&callback_var),
                     W::local_get(&duration_var),
-                    W::call("$set-timeout"),
+                    W::call("$set_timeout"),
                 ]);
             } else {
                 // TODO: throw TypeError
@@ -1209,7 +1220,7 @@ impl WasmTranslator {
         let value = s.replace("\"", "\\\"");
         let len = value.len() as i32;
         let offset = self.data_offset;
-        if let Some(offset) = self.string_offsets.get(&value) {
+        let result = if let Some(offset) = self.string_offsets.get(&value) {
             (*offset, len)
         } else {
             self.data_entries.insert(offset, value.clone());
@@ -1222,7 +1233,8 @@ impl WasmTranslator {
             };
 
             (offset, len)
-        }
+        };
+        result
     }
 
     fn translate_statement(&mut self, statement: &Statement) -> InstructionsList {
@@ -1429,7 +1441,8 @@ fn main() -> anyhow::Result<()> {
         .parse_script(&mut interner)
         .map_err(|e| anyhow!("JAWSM parsing error: {e}"))?;
 
-    let mut translator = WasmTranslator::new(interner);
+    let module = jawsm::wasm::generate_module();
+    let mut translator = WasmTranslator::new(interner, module);
     // println!("{ast:#?}");
     ast.visit_with(&mut translator);
     // exit $init function
@@ -1446,10 +1459,11 @@ fn main() -> anyhow::Result<()> {
 
     let module = translator.module.clone();
     let mut module = TailCallTransformer::new(module).transform();
-    let mut module = jawsm::wasm::generate_module(&mut module);
 
     for (offset, value) in translator.data_entries {
-        module.add_data_raw(offset as usize, value);
+        if !module.data.iter().any(|(o, _)| *o as i32 == offset) {
+            module.add_data_raw(offset as usize, value);
+        }
     }
 
     let jawsm_dir = std::env::var("JAWSM_DIR").unwrap_or(".".into());

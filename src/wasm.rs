@@ -1,8 +1,8 @@
 use tarnik::wasm;
 use tarnik_ast::WatModule;
 
-pub fn generate_module(generated_module: &mut WatModule) -> WatModule {
-    let mut module: WatModule = wasm! {
+pub fn generate_module() -> WatModule {
+    wasm! {
         #[import("wasi_snapshot_preview1", "fd_write")]
         fn write(fd: i32, iov_start: i32, iov_len: i32, nwritten: i32) -> i32;
 
@@ -241,7 +241,7 @@ pub fn generate_module(generated_module: &mut WatModule) -> WatModule {
 
                 // Handle then callback if present
                 if ref_test!(promise.then_callback, Function) {
-                    result = call_function(promise.then_callback as Function, null, arguments);
+                    result = call_function(promise.catch_callback as Function, null, arguments);
                 } else {
                     result = previous_result;
                 }
@@ -1482,9 +1482,5 @@ pub fn generate_module(generated_module: &mut WatModule) -> WatModule {
         fn start() {
             proc_exit(outer_init());
         }
-    };
-
-    module.append(generated_module);
-
-    module
+    }
 }
