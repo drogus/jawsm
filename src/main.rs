@@ -33,10 +33,9 @@ use std::{
     path::Path,
 };
 
-mod wat_template;
 use jawsm::tail_call_transformer::TailCallTransformer;
 use tarnik_ast::{
-    InstructionsList, Nullable, WasmType, WatFunction, WatInstruction as W, WatModule,
+    InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W, WatModule,
 };
 
 enum VarType {
@@ -237,7 +236,7 @@ impl WasmTranslator {
 
         vec![
             W::local_get("$scope"),
-            W::ref_func(function_name),
+            W::ref_func(format!("${function_name}")),
             W::ref_null_any(),
             W::call("$new_function"),
         ]
@@ -1341,7 +1340,7 @@ impl WasmTranslator {
         block_instructions.push(W::br("$while_loop"));
         vec![W::r#loop(
             "$while_loop".to_string(),
-            vec![W::block("$break", block_instructions)],
+            vec![W::block("$break", Signature::default(), block_instructions)],
         )]
     }
 
@@ -1351,7 +1350,11 @@ impl WasmTranslator {
         for statement in block.statement_list().statements() {
             instructions.append(&mut self.translate_statement_list_item(statement));
         }
-        let block_instr = W::block(self.current_block_name(), instructions);
+        let block_instr = W::block(
+            self.current_block_name(),
+            Signature::default(),
+            instructions,
+        );
         self.exit_block();
 
         vec![block_instr]
@@ -1439,24 +1442,19 @@ fn main() -> anyhow::Result<()> {
     // TODO: I'm not a big fan of this, cause it's in reverse order
     init.body.push_front(W::local_set("$scope"));
     init.body.push_front(W::ref_cast(scope_type));
-    init.body.push_front(W::global_get("$scope"));
+    init.body.push_front(W::global_get("$global_scope"));
 
     let module = translator.module.clone();
-    let module = TailCallTransformer::new(module).transform();
+    let mut module = TailCallTransformer::new(module).transform();
+    let mut module = jawsm::wasm::generate_module(&mut module);
 
-    // Generate the full WAT module
-    let module = module.to_string();
-
-    // Generate the full WAT module using the template
-    let module = wat_template::generate_wat_template(
-        translator.additional_functions(),
-        module,
-        &mut translator,
-    );
+    for (offset, value) in translator.data_entries {
+        module.add_data_raw(offset as usize, value);
+    }
 
     let jawsm_dir = std::env::var("JAWSM_DIR").unwrap_or(".".into());
     let mut f = File::create(Path::new(&jawsm_dir).join("wat/generated.wat")).unwrap();
-    f.write_all(module.as_bytes()).unwrap();
+    f.write_all(module.to_string().as_bytes()).unwrap();
 
     // println!("WAT modules generated successfully!");
     Ok(())

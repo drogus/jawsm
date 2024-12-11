@@ -134,7 +134,7 @@ const importObject = {
   } else if (typeof read !== "undefined") {
     bytes = read("wasm/generated.wasm", "binary");
   } else {
-    const response = await fetch("out.wasm");
+    const response = await fetch("wasm/generated.wasm");
     bytes = await response.arrayBuffer();
   }
   let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
@@ -143,7 +143,7 @@ const importObject = {
 
   let result = exports["wasi:cli/run@0.2.1#run"]();
 
-  if (typeof process !== undefined) {
+  if (typeof process !== "undefined") {
     process.exit(result);
   }
 })();

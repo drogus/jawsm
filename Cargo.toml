@@ -17,3 +17,4 @@ anyhow = "1"
 tera = "1.20.0"
 lazy_static = "1"
 tarnik-ast = { path = "../tarnik/ast" }
+tarnik = { path = "../tarnik/generator" }
