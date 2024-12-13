@@ -2,7 +2,9 @@
 
 let instance,
   pollables = [],
-  pollableIndex = 0;
+  pollableIndex = 0,
+  scriptResult,
+  pollablesToWaitForLength = 0;
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -62,6 +64,13 @@ const importObject = {
       const pollablesToWaitFor = [];
       for (const id of pollableIds) {
         pollablesToWaitFor.push(findPollable(id).getPromise());
+      }
+
+      pollablesToWaitForLength = pollablesToWaitFor.length;
+      if (pollablesToWaitForLength === 0) {
+        if (typeof process !== "undefined") {
+          process.exit(scriptResult);
+        }
       }
 
       Promise.race(pollablesToWaitFor).then((ready) => {
@@ -143,5 +152,11 @@ const importObject = {
   instance = await WebAssembly.instantiate(compiled, importObject);
   const exports = instance.exports;
 
-  let result = exports["wasi:cli/run@0.2.1#run"]();
+  scriptResult = exports["wasi:cli/run@0.2.1#run"]();
+
+  if (pollablesToWaitForLength === 0) {
+    if (typeof process !== "undefined") {
+      process.exit(scriptResult);
+    }
+  }
 })();

@@ -74,13 +74,14 @@ pub fn generate_module() -> WatModule {
             scope: mut Scope,
             func: mut JSFunc,
             this: mut anyref,
-            properties: mut HashMap
+            properties: mut HashMap,
+            own_prototype: mut anyref
         }
 
         // Object types
         struct Object {
             properties: mut HashMap,
-            prototype: mut anyref
+            own_prototype: mut anyref,
         }
 
         struct Number {
@@ -107,7 +108,6 @@ pub fn generate_module() -> WatModule {
             type PromisesArray = [mut Nullable<Promise>];
             struct Promise {
                 properties: mut HashMap,
-                prototype: mut Object,
                 success_result: mut anyref,
                 error_result: mut anyref,
                 then_callback: mut Nullable<Function>,
@@ -115,7 +115,8 @@ pub fn generate_module() -> WatModule {
                 finally_callback: mut Nullable<Function>,
                 resolved: mut i32,
                 errored: mut i32,
-                chained_promises: mut PromisesArray
+                chained_promises: mut PromisesArray,
+                own_prototype: mut anyref,
             }
         }
 
@@ -123,6 +124,8 @@ pub fn generate_module() -> WatModule {
         static mut free_memory_offset: i32 = 1000;
         static mut global_scope: Nullable<Scope> = null;
         static mut promise_prototype: Nullable<Object> = null;
+        static mut global_object_prototype: Nullable<Object> = null;
+        static mut global_function_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
 
         // Memory management functions required by the Component Model
@@ -146,7 +149,6 @@ pub fn generate_module() -> WatModule {
         fn create_new_promise() -> Promise {
             return Promise {
                 properties: new_hashmap(),
-                prototype: promise_prototype as Object,
                 success_result: null,
                 error_result: null,
                 then_callback: null,
@@ -154,30 +156,39 @@ pub fn generate_module() -> WatModule {
                 finally_callback: null,
                 resolved: 0,
                 errored: 0,
-                chained_promises: [null; 1]
+                chained_promises: [null; 1],
+                own_prototype: null
             };
         }
 
         fn create_promise_prototype() -> Object {
             let object: Object = new_object();
-            let then_str: i32 = data!("then");
-            let catch_str: i32 = data!("catch");
-            let finally_str: i32 = data!("finally");
 
-            set_property(object, then_str,
+            set_property(object, data!("then"),
                 new_function(global_scope as Scope, Promise_then, null));
 
-            set_property(object, catch_str,
+            set_property(object, data!("catch"),
                 new_function(global_scope as Scope, Promise_catch, null));
 
-            set_property(object, finally_str,
+            set_property(object, data!("finally"),
                 new_function(global_scope as Scope, Promise_finally, null));
+
+            set_property(object, data!("toString"),
+                new_function(global_scope as Scope, Promise_toString, null));
+
+            set_property(object, data!("constructor"),
+                new_function(global_scope as Scope, Promise_constructor, null));
 
             return object;
         }
 
+        fn Promise_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return new_static_string(data!("[object Promise]"), 16);
+        }
+
         fn Promise_catch(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let new_promise: Promise = create_new_promise();
+            new_promise.own_prototype = promise_prototype;
             let promise: Promise = this as Promise;
             let catch_args: JSArgs;
 
@@ -193,6 +204,58 @@ pub fn generate_module() -> WatModule {
             }
 
             return new_promise;
+        }
+
+        fn create_object_prototype() -> Object {
+            let object: Object = new_object();
+
+            set_property(object, data!("toString"),
+                new_function(global_scope as Scope, Object_toString, null));
+
+            return object;
+        }
+
+        fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return new_static_string(data!("[object Object]"), 15);
+        }
+
+        fn create_function_prototype() -> Object {
+            let object: Object = new_object();
+
+            set_property(object, data!("toString"),
+                new_function(global_scope as Scope, Function_toString, null));
+
+            set_property(object, data!("call"),
+                new_function(global_scope as Scope, Function_call, null));
+
+            return object;
+        }
+
+        fn Function_call(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let mut new_this: anyref = null;
+            let mut rest: JSArgs = [null; 0];
+            let args_length: i32 = len!(arguments);
+            let mut i: i32 = 0;
+
+            if args_length > 0 {
+                new_this = arguments[0];
+            }
+            if args_length > 1 {
+                rest = [null; args_length - 1];
+                i = 1;
+                while i < args_length {
+                    rest[i - 1] = arguments[i];
+                    i += 1;
+                }
+            }
+
+            // fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: tail call
+            return call_function(this, new_this, rest);
+        }
+
+        fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return new_static_string(data!("function () { [native code] }"), 29);
         }
 
         fn add_to_promise_chain(target_promise: Promise, promise: Promise) {
@@ -285,6 +348,7 @@ pub fn generate_module() -> WatModule {
 
         fn Promise_finally(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let new_promise: Promise = create_new_promise();
+            new_promise.own_prototype = promise_prototype;
             let promise: Promise = this as Promise;
             let callback_anyref: anyref;
 
@@ -321,6 +385,7 @@ pub fn generate_module() -> WatModule {
 
         fn Promise_then(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let new_promise: Promise = create_new_promise();
+            new_promise.own_prototype = promise_prototype;
             let promise: Promise = this as Promise;
             let callback_anyref: anyref;
 
@@ -474,11 +539,21 @@ pub fn generate_module() -> WatModule {
             return arguments;
         }
 
-        fn return_object_or(first: anyref, second: anyref) -> anyref {
+        fn return_new_instance_result(first: anyref, second: anyref, prototype: anyref) -> anyref {
+            let mut result: anyref;
             if ref_test!(first, Object) || ref_test!(first, Promise) {
-                return first;
+                result = first;
+            } else {
+                result = second;
             }
-            return second;
+
+            if ref_test!(result, Object) {
+                (result as Object).own_prototype = prototype;
+            } else if ref_test!(result, Promise) {
+                (result as Promise).own_prototype = prototype;
+            }
+
+            return result;
         }
 
         fn add_static_strings(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> String {
@@ -547,7 +622,7 @@ pub fn generate_module() -> WatModule {
         fn new_object() -> Object {
             return Object {
                 properties: new_hashmap(),
-                prototype: null
+                own_prototype: global_object_prototype,
             };
         }
 
@@ -558,12 +633,18 @@ pub fn generate_module() -> WatModule {
         }
 
         fn new_function(scope: Scope, function: JSFunc, this: anyref) -> Function {
-            return Function {
+            let f: Function = Function {
                 scope: scope,
                 func: function,
                 this: this,
-                properties: new_hashmap()
+                properties: new_hashmap(),
+                own_prototype: global_function_prototype
             };
+
+            // TODO: this should also have a constructor set
+            set_property(f, data!("prototype"), new_object());
+
+            return f;
         }
 
         fn new_number(number: f64) -> Number {
@@ -711,22 +792,52 @@ pub fn generate_module() -> WatModule {
         // TODO: this should also handle prototypes
         fn get_property(target: anyref, name: i32) -> anyref {
             let mut result: anyref;
+            let promise: Promise;
+            let function: Function;
+            let object: Object;
 
+            // TODO: as long as objects like Function and String are just another objects
+            // we will have to reimplement a lot of stuff like this. It would be great
+            // to research parent and child types
             if ref_test!(target, Object) {
-                result = hashmap_get((target as Object).properties, name);
-            } else {
-                // TODO: as long as objects like Function and String are just another objects
-                // we will have to reimplement a lot of stuff like this. It would be great
-                // to research parent and child types
-                if ref_test!(target, Function) {
-                    result = hashmap_get((target as Function).properties, name);
-                } else if ref_test!(target, Promise) {
-                    result = hashmap_get((target as Promise).properties, name);
-                    if ref_test!(result, i31ref) {
+                object = target as Object;
+                result = hashmap_get(object.properties, name);
+                if ref_test!(result, i31ref) {
+                    if !ref_test!(result, null) {
                         if (result as i31ref) == -1 {
                             // if the result is i31ref -1, it means nothing was found, so
-                            // we need to search the $prototype
-                            result = get_property((target as Promise).prototype, name);
+                            // we need to search prototypes
+                            if !ref_test!(object.own_prototype, null) {
+                                result = get_property(object.own_prototype, name);
+                            }
+                        }
+                    }
+                }
+            } else if ref_test!(target, Function) {
+                function = target as Function;
+                result = hashmap_get(function.properties, name);
+                if ref_test!(result, i31ref) {
+                    if !ref_test!(result, null) {
+                        if (result as i31ref) == -1 {
+                            // if the result is i31ref -1, it means nothing was found, so
+                            // we need to search prototypes
+                            if !ref_test!(function.own_prototype, null) {
+                                result = get_property(function.own_prototype, name);
+                            }
+                        }
+                    }
+                }
+            } else if ref_test!(target, Promise) {
+                promise = target as Promise;
+                result = hashmap_get(promise.properties, name);
+                if ref_test!(result, i31ref) {
+                    if !ref_test!(result, null) {
+                        if (result as i31ref) == -1 {
+                            // if the result is i31ref -1, it means nothing was found, so
+                            // we need to search prototypes
+                            if !ref_test!(promise.own_prototype, null) {
+                                result = get_property(promise.own_prototype, name);
+                            }
                         }
                     }
                 }
@@ -734,7 +845,8 @@ pub fn generate_module() -> WatModule {
 
             if ref_test!(result, i31ref) {
                 if (result as i31ref) == -1 {
-                    throw!(JSException, 100 as i31ref);
+                    let message: i32 = 100000 + name;
+                    throw!(JSException, message as i31ref);
                 }
             }
 
@@ -868,6 +980,10 @@ pub fn generate_module() -> WatModule {
 
             // we need to somehow differentiate between value not being found and the found
             // value being null
+            // TODO: it would be much easier to check the result on the call site if we
+            // returned a pair of values - i32 and anyref, where i32 is for checking if
+            // the value was found. Tarnik doesn't support multiple return values, so it would
+            // be nice to fix it
             // TODO: trying to return -1 as i31ref fails, cause tarnik first tries to get
             // i31.get_s and only then negate. It should be fixed
             let res_i32: i32 = -1;
@@ -1450,8 +1566,13 @@ pub fn generate_module() -> WatModule {
             global_scope = new_scope(null);
 
             promise_prototype = create_promise_prototype();
+            global_object_prototype = create_object_prototype();
+            global_function_prototype = create_function_prototype();
 
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
+
+            set_property(promise_constructor, data!("prototype"), promise_prototype);
+
             set_variable(global_scope as Scope, data!("Promise"), promise_constructor);
         }
 

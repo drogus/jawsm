@@ -284,6 +284,7 @@ impl WasmTranslator {
         &mut self,
         call: &Call,
         get_this: W,
+        additional_instructions: Option<InstructionsList>,
         will_use_return: bool,
     ) -> InstructionsList {
         // println!(
@@ -367,7 +368,12 @@ impl WasmTranslator {
                     .current_function()
                     .add_local("$function", WasmType::Anyref);
                 instructions.append(&mut self.translate_expression(call.function(), true));
-                instructions.push(W::local_set(&function_local));
+                if let Some(mut additional_instructions) = additional_instructions {
+                    instructions.push(W::local_tee(&function_local));
+                    instructions.append(&mut additional_instructions);
+                } else {
+                    instructions.push(W::local_set(&function_local));
+                }
 
                 // Call the function
                 instructions.append(&mut vec![
@@ -612,7 +618,9 @@ impl WasmTranslator {
             }
             Expression::New(new) => self.translate_new(new),
             // TODO: the default this value is a global object
-            Expression::Call(call) => self.translate_call(call, W::ref_null_any(), will_use_return),
+            Expression::Call(call) => {
+                self.translate_call(call, W::ref_null_any(), None, will_use_return)
+            }
             Expression::SuperCall(_super_call) => todo!(),
             Expression::ImportCall(_import_call) => todo!(),
             Expression::Optional(_optional) => todo!(),
@@ -991,12 +999,39 @@ impl WasmTranslator {
             "$new_instance",
             WasmType::Ref("$Object".into(), Nullable::False),
         );
+        let prototype_local = self
+            .current_function()
+            .add_local("$prototype", WasmType::Anyref);
+        let function_local = self
+            .current_function()
+            .add_local("$function", WasmType::Anyref);
+
         let mut result = vec![W::call("$new_object"), W::local_set(&new_instance)];
-        result.append(&mut self.translate_call(new.call(), W::local_get(&new_instance), true));
+
+        let prototype_instructions = vec![
+            W::ref_cast(WasmType::Ref("$Function".to_string(), Nullable::False)),
+            W::local_tee(&function_local),
+            W::I32Const(self.insert_data_string("prototype").0),
+            W::call("$get_property"),
+            W::local_set(&prototype_local),
+        ];
+        result.append(&mut self.translate_call(
+            new.call(),
+            W::local_get(&new_instance),
+            Some(prototype_instructions),
+            true,
+        ));
         result.append(&mut vec![
             W::local_get(&new_instance),
-            W::call("$return_object_or"),
+            W::local_get(&prototype_local),
+            W::call("$return_new_instance_result"),
+            // W::local_set(&prototype_local),
+            // W::local_get(&new_instance),
+            // W::local_get(&prototype_local),
+            // W::struct_set("$Object", "$prototype"),
+            //
         ]);
+
         result
     }
 
@@ -1424,7 +1459,7 @@ impl<'a> Visitor<'a> for WasmTranslator {
     }
 
     fn visit_call(&mut self, node: &'a Call) -> ControlFlow<Self::BreakTy> {
-        let instructions = self.translate_call(node, W::ref_null_any(), false);
+        let instructions = self.translate_call(node, W::ref_null_any(), None, false);
         self.current_function().add_instructions(instructions);
         ControlFlow::Continue(())
     }
