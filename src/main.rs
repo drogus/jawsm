@@ -35,7 +35,8 @@ use std::{
 
 use jawsm::tail_call_transformer::TailCallTransformer;
 use tarnik_ast::{
-    InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W, WatModule,
+    Global, InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W,
+    WatModule,
 };
 
 enum VarType {
@@ -76,7 +77,6 @@ struct WasmTranslator {
     interner: Interner,
     functions: HashMap<String, String>,
     init_code: Vec<String>,
-    data_entries: HashMap<i32, String>,
     string_offsets: HashMap<String, i32>,
     data_offset: i32,
     identifiers_map: HashMap<i32, i32>,
@@ -86,13 +86,7 @@ struct WasmTranslator {
 impl WasmTranslator {
     fn new(interner: Interner, module: WatModule) -> Self {
         let function = WatFunction::new("init".to_string());
-        let data_offset = module.data_offset as i32;
-        let data_entries = module
-            .data
-            .clone()
-            .into_iter()
-            .map(|(o, s)| (o as i32, s))
-            .collect();
+        let data_offset = module.data_offset as i32 + 4;
         let string_offsets = module
             .data
             .clone()
@@ -105,7 +99,6 @@ impl WasmTranslator {
             interner,
             functions: HashMap::new(),
             init_code: Vec::new(),
-            data_entries,
             string_offsets,
             data_offset: data_offset + 4,
             identifiers_map: HashMap::new(),
@@ -117,20 +110,14 @@ impl WasmTranslator {
         if let Some(offset) = self.identifiers_map.get(&(sym.get() as i32)) {
             *offset
         } else {
-            let (offset, _) = self.insert_data_string(value);
-            self.identifiers_map.insert(sym.get() as i32, offset);
-            offset
+            let (offset, _) = self.module.add_data(value.to_string());
+            self.identifiers_map.insert(sym.get() as i32, offset as i32);
+            offset as i32
         }
     }
 
     fn add_symbol(&mut self, sym: Sym) -> i32 {
         self.add_new_symbol(sym, &self.interner.resolve(sym).unwrap().to_string())
-    }
-
-    fn add_string(&mut self, s: impl Into<String>) -> i32 {
-        let s: String = s.into();
-        let sym = self.interner.get_or_intern(JStrRef::Utf8(&s));
-        self.add_new_symbol(sym, &s)
     }
 
     fn add_identifier(&mut self, identifier: &Identifier) -> i32 {
@@ -462,7 +449,7 @@ impl WasmTranslator {
                     RelationalOp::LessThan => "$less_than",
                     RelationalOp::LessThanOrEqual => todo!(),
                     RelationalOp::In => todo!(),
-                    RelationalOp::InstanceOf => todo!(),
+                    RelationalOp::InstanceOf => "$instance_of",
                 };
                 let rhs = self.current_function().add_local("$rhs", WasmType::Anyref);
                 let lhs = self.current_function().add_local("$lhs", WasmType::Anyref);
@@ -554,11 +541,27 @@ impl WasmTranslator {
                         }
                     }
                     PropertyAccessField::Expr(expression) => {
-                        dbg!(&expression);
-                        todo!()
-                        // let expr_result_var =
-                        //     self.current_function().add_local("$expr_result", WasmType::Anyref);
-                        // let expr_result_instr = self.translate_expression(expression, true);
+                        let target_local = self
+                            .current_function()
+                            .add_local("$target", WasmType::Anyref);
+                        let mut instructions = self.translate_expression(expression, true);
+                        instructions.push(W::local_tee(&target_local));
+                        instructions.push(W::call("$to_string"));
+
+                        if let Some(mut assign_instructions) = assign {
+                            let temp = self.current_function().add_local("$temp", WasmType::Anyref);
+                            let mut result = vec![];
+                            result.append(&mut target);
+                            result.append(&mut instructions);
+                            result.append(&mut assign_instructions);
+                            result.append(&mut vec![W::call("$set_property_str")]);
+                            result
+                        } else {
+                            target.append(&mut instructions);
+                            target.push(W::call("$get_property_str"));
+                            target
+                        }
+
                         //
                         //  TODO:
                         //
@@ -1031,15 +1034,16 @@ impl WasmTranslator {
         let prototype_local = self
             .current_function()
             .add_local("$prototype", WasmType::Anyref);
-        let function_local = self
-            .current_function()
-            .add_local("$function", WasmType::Anyref);
+        let constructor = self.current_function().add_local(
+            "$constructor",
+            WasmType::Ref("$Function".to_string(), Nullable::False),
+        );
 
         let mut result = vec![W::call("$new_object"), W::local_set(&new_instance)];
 
         let prototype_instructions = vec![
             W::ref_cast(WasmType::Ref("$Function".to_string(), Nullable::False)),
-            W::local_tee(&function_local),
+            W::local_tee(&constructor),
             W::I32Const(self.insert_data_string("prototype").0),
             W::call("$get_property"),
             W::local_set(&prototype_local),
@@ -1053,6 +1057,7 @@ impl WasmTranslator {
         result.append(&mut vec![
             W::local_get(&new_instance),
             W::local_get(&prototype_local),
+            W::local_get(&constructor),
             W::call("$return_new_instance_result"),
             // W::local_set(&prototype_local),
             // W::local_get(&new_instance),
@@ -1313,24 +1318,8 @@ impl WasmTranslator {
     }
 
     fn insert_data_string(&mut self, s: &str) -> (i32, i32) {
-        let value = s.replace("\"", "\\\"");
-        let len = value.len() as i32;
-        let offset = self.data_offset;
-        let result = if let Some(offset) = self.string_offsets.get(&value) {
-            (*offset, len)
-        } else {
-            self.data_entries.insert(offset, value.clone());
-            self.string_offsets.insert(value, offset);
-            self.data_offset += if len % 4 == 0 {
-                len
-            } else {
-                // some runtimes expect all data aligned to 4 bytes
-                len + (4 - len % 4)
-            };
-
-            (offset, len)
-        };
-        result
+        let (offset, length) = self.module.add_data(s.to_string());
+        (offset as i32, length as i32)
     }
 
     fn translate_statement(&mut self, statement: &Statement) -> InstructionsList {
@@ -1601,7 +1590,7 @@ fn main() -> anyhow::Result<()> {
 
     let js_path = &args[1];
     let output_path = args.get(2);
-    
+
     let js_code = std::fs::read_to_string(js_path)?;
     let js_include = include_str!("js/prepend.js");
     let full = format!("{js_include}\n{js_code}");
@@ -1632,14 +1621,34 @@ fn main() -> anyhow::Result<()> {
     let module = translator.module.clone();
     let mut module = TailCallTransformer::new(module).transform();
 
-    for (offset, value) in translator.data_entries {
-        if !module.data.iter().any(|(o, _)| *o as i32 == offset) {
-            module.add_data_raw(offset as usize, value);
-        }
-    }
+    // add data entries from the translator to the generated module
+    // let mut sorted_entries: Vec<_> = translator.data_entries.into_iter().collect();
+    // sorted_entries.sort_by_key(|(offset, _)| *offset);
+    //
+    // for (offset, value) in sorted_entries {
+    //     if !module.data.iter().any(|(o, _)| *o as i32 == offset) {
+    //         module.add_data_raw(offset as usize, value);
+    //     }
+    // }
+
+    let data_str = generate_data_string(&module.data);
+    let (offset, _) = module.add_data(data_str);
+
+    // at the moment we don't have a way to inject stuff into WASM macro, so we change the right
+    // global afterwards
+    module.globals.insert(
+        "$data_offsets_offset".to_string(),
+        Global {
+            name: "$data_offsets_offset".to_string(),
+            ty: WasmType::I32,
+            init: vec![tarnik_ast::WatInstruction::I32Const(offset as i32)],
+            mutable: false,
+        },
+    );
 
     let binary = wat::parse_str(module.to_string())?;
-    
+
+    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
     match output_path {
         Some(path) => {
             std::fs::write(path, &binary)?;
@@ -1650,4 +1659,41 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn generate_data_string(pairs: &[(usize, String)]) -> String {
+    let mut result = String::new();
+
+    // First 4 bytes - length of entries (little-endian)
+    let len = pairs.len() as i32;
+    result.push_str(&format!(
+        "\\{:02x}\\{:02x}\\{:02x}\\{:02x}",
+        len & 0xff, // Least significant byte first
+        (len >> 8) & 0xff,
+        (len >> 16) & 0xff,
+        (len >> 24) & 0xff // Most significant byte last
+    ));
+
+    // For each pair, add offset (4 bytes) and length (4 bytes)
+    for (offset, str) in pairs {
+        let offset = *offset as i32;
+        result.push_str(&format!(
+            "\\{:02x}\\{:02x}\\{:02x}\\{:02x}",
+            offset & 0xff, // Least significant byte first
+            (offset >> 8) & 0xff,
+            (offset >> 16) & 0xff,
+            (offset >> 24) & 0xff // Most significant byte last
+        ));
+
+        let len = str.len() as i32;
+        result.push_str(&format!(
+            "\\{:02x}\\{:02x}\\{:02x}\\{:02x}",
+            len & 0xff, // Least significant byte first
+            (len >> 8) & 0xff,
+            (len >> 16) & 0xff,
+            (len >> 24) & 0xff // Most significant byte last
+        ));
+    }
+
+    result
 }

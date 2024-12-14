@@ -70,18 +70,29 @@ pub fn generate_module() -> WatModule {
         type JSArgs = [mut anyref];
         type JSFunc = fn(scope: Scope, this: anyref, arguments: JSArgs) -> anyref;
 
+        struct InternMapEntry {
+            key: CharArray,
+            value: i32
+        }
+        type InternEntriesArray = [mut Nullable<InternMapEntry>];
+        struct InternMap {
+            entries: mut InternEntriesArray,
+            size: mut i32
+        }
+
         struct Function {
             scope: mut Scope,
             func: mut JSFunc,
             this: mut anyref,
             properties: mut HashMap,
-            own_prototype: mut anyref
+            own_prototype: mut anyref,
         }
 
         // Object types
         struct Object {
             properties: mut HashMap,
             own_prototype: mut anyref,
+            // interned: InternMap,
         }
 
         struct Number {
@@ -120,8 +131,10 @@ pub fn generate_module() -> WatModule {
             }
         }
 
-        // TODO; allow to insert valus from outside the macro
-        static mut free_memory_offset: i32 = 1000;
+        // TODO; allow to insert valus from outside the macro, for now it's fine to just use
+        // something big enough to allow small scripts to run
+        static mut free_memory_offset: i32 = 5000;
+        static mut data_offsets_offset: i32 = 0;
         static mut global_scope: Nullable<Scope> = null;
         static mut promise_prototype: Nullable<Object> = null;
         static mut global_object_prototype: Nullable<Object> = null;
@@ -216,6 +229,7 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("constructor"),
                 new_function(global_scope as Scope, Object_constructor, null));
 
+            object.own_prototype = null;
             return object;
         }
 
@@ -585,6 +599,11 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn create_arguments_0() -> JSArgs {
+            let arguments: JSArgs = [null; 0];
+            return arguments;
+        }
+
         fn create_arguments_1(arg1: anyref) -> JSArgs {
             let arguments: JSArgs = [null; 1];
             arguments[0] = arg1;
@@ -598,8 +617,10 @@ pub fn generate_module() -> WatModule {
             return arguments;
         }
 
-        fn return_new_instance_result(first: anyref, second: anyref, prototype: anyref) -> anyref {
+        fn return_new_instance_result(first: anyref, second: anyref, prototype: anyref, constructor: Function) -> anyref {
             let mut result: anyref;
+            let object: Object;
+            let promise: Promise;
             if ref_test!(first, Object) || ref_test!(first, Promise) {
                 result = first;
             } else {
@@ -607,9 +628,13 @@ pub fn generate_module() -> WatModule {
             }
 
             if ref_test!(result, Object) {
-                (result as Object).own_prototype = prototype;
+                object = result as Object;
+                object.own_prototype = prototype;
+                set_property(object, data!("constructor"), constructor);
             } else if ref_test!(result, Promise) {
-                (result as Promise).own_prototype = prototype;
+                promise = result as Promise;
+                promise.own_prototype = prototype;
+                set_property(promise, data!("constructor"), constructor);
             }
 
             return result;
@@ -682,8 +707,16 @@ pub fn generate_module() -> WatModule {
             return Object {
                 properties: new_hashmap(),
                 own_prototype: global_object_prototype,
+                // interned: create_intern_map(),
             };
         }
+
+        // fn create_intern_map() -> InternMap {
+        //     return InternMap {
+        //         entries: [null, 2],
+        //         size: 0
+        //     };
+        // }
 
         fn new_array(size: i32) -> Array {
             return Array {
@@ -836,7 +869,7 @@ pub fn generate_module() -> WatModule {
             let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 24));
             call_function(constructor, object, arguments);
 
-            return return_new_instance_result(object, null, get_property(constructor, data!("prototype")));
+            return return_new_instance_result(object, null, get_property(constructor, data!("prototype")), constructor);
         }
 
         fn get_variable(scope: Scope, name: i32) -> anyref {
@@ -857,6 +890,52 @@ pub fn generate_module() -> WatModule {
                 }
             }
             throw!(JSException, 103 as i31ref);
+        }
+
+        fn get_property_str(target: anyref, name: anyref) -> anyref {
+            let offset: i32;
+
+            if ref_test!(name, String) {
+                offset = get_data_offset_str((name as String).data);
+            } else if ref_test!(name, StaticString) {
+                // TODO: implement
+                let result: i32 = -1;
+                return result as i31ref;
+            } else {
+                // should we try to convert to string again?
+                // TODO: implement
+                let result: i32 = -1;
+                return result as i31ref;
+            }
+
+            if offset != 0 {
+                return get_property(target, offset);
+            }
+
+            let result: i32 = -1;
+            return result as i31ref;
+        }
+
+        fn set_property_str(target: anyref, name: anyref, value: anyref) {
+            let offset: i32;
+
+            if ref_test!(name, String) {
+                offset = get_data_offset_str((name as String).data);
+            } else if ref_test!(name, StaticString) {
+                // TODO: implement
+            } else {
+                // should we try to convert to string again?
+                // TODO: implement
+            }
+
+            if offset != 0 {
+                set_property(target, offset, value);
+
+                return;
+            }
+
+            // It mans we haven't translated the string properly
+            throw!(JSException, 3030303 as i31ref);
         }
 
         // TODO: this should also handle prototypes
@@ -917,6 +996,10 @@ pub fn generate_module() -> WatModule {
             }
 
             if ref_test!(result, i31ref) {
+                if ref_test!(result, null) {
+                    return result;
+                }
+
                 if (result as i31ref) == -1 {
                     return result;
                 }
@@ -1299,6 +1382,46 @@ pub fn generate_module() -> WatModule {
             //     return 1 as i31ref;
             // }
 
+            return 0 as i31ref;
+        }
+
+        fn get_own_prototype(instance: anyref) -> Nullable<Object> {
+            if ref_test!(instance, Object) {
+                return (instance as Object).own_prototype as Object;
+            } else if ref_test!(instance, Promise) {
+                return (instance as Promise).own_prototype as Object;
+            } else if ref_test!(instance, Function) {
+                return (instance as Function).own_prototype as Object;
+            }
+
+            return null;
+        }
+
+        fn instance_of(instance: anyref, constructor: anyref) -> i31ref {
+            if !ref_test!(constructor, Function) {
+                return 0 as i31ref;
+            }
+
+            let target_prototype_anyref: anyref = get_property(constructor, data!("prototype"));
+            // is it possible to define a local of ref type and not assign anything right away?
+            let mut target_prototype: Object = new_object();
+            let mut prototype: Nullable<Object> = null;
+
+            if ref_test!(target_prototype_anyref, Object) {
+                target_prototype = target_prototype_anyref as Object;
+            } else {
+                return 0 as i31ref;
+            }
+
+            prototype = get_own_prototype(instance);
+
+            while !ref_test!(prototype, null) {
+                if prototype as Object == target_prototype {
+                    return 1 as i31ref;
+                }
+
+                prototype = get_own_prototype(prototype);
+            }
             return 0 as i31ref;
         }
 
@@ -1752,6 +1875,73 @@ pub fn generate_module() -> WatModule {
         fn op_minus(arg: anyref) -> Number {
             // TODO: just a stup for now
             return new_number(1);
+        }
+
+        fn to_string(target: anyref) -> String {
+            let static_str: StaticString;
+            let result: anyref;
+            if ref_test!(target, String) {
+                return target as String;
+            } else if ref_test!(target, StaticString) {
+                static_str = target as StaticString;
+                // If we only return static strings for stuff that is in memory, maybe
+                // we could use it directly for fetching props
+                return memory_to_string(static_str.offset, static_str.length);
+            }
+
+            // TODO: handle the case where we don't get anything
+            let to_string_func: Function = get_property(target, data!("toString")) as Function;
+            // TODO: handle a case when toString does not return a String
+            let result = call_function(to_string_func, target, create_arguments_0());
+
+            if ref_test!(result, StaticString) {
+                return memory_to_string((result as StaticString).offset, (result as StaticString).length);
+            } else if ref_test!(result, String) {
+                return result as String;
+            }
+
+            throw!(JSException, 2222222 as i31ref);
+        }
+
+        fn get_data_offset_str(str: CharArray) -> i32 {
+            let mut offset: i32 = data_offsets_offset;
+            let length: i32 = memory[offset];
+            let mut i: i32 = 0;
+            let mut str_offset: i32;
+            let mut str_length: i32;
+            let mut target_length: i32 = len!(str);
+            let mut j: i32;
+            let mut found: i32 = 0;
+
+            offset += 4;
+
+            while i < length {
+                str_offset = memory[offset];
+                str_length = memory[offset + 4];
+
+                if str_length == target_length {
+                    j = 0;
+                    found = 1;
+                    while j < str_length {
+                        if memory::<i8>[str_offset + j] != str[j] {
+                            found = 0;
+                            j = str_length; // poor man's break
+                        }
+
+                        j += 1;
+                    }
+
+                    if found {
+                        return str_offset;
+                    }
+                }
+
+                i += 1;
+                offset += 8;
+            }
+
+            // we can return 0 as we don't store anything at offset 0
+            return 0;
         }
 
         // This is not how the run loop will run in the future. `poll_many`
