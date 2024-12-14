@@ -126,6 +126,7 @@ pub fn generate_module() -> WatModule {
         static mut promise_prototype: Nullable<Object> = null;
         static mut global_object_prototype: Nullable<Object> = null;
         static mut global_function_prototype: Nullable<Object> = null;
+        static mut global_number_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
 
         // Memory management functions required by the Component Model
@@ -212,11 +213,30 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("toString"),
                 new_function(global_scope as Scope, Object_toString, null));
 
+            set_property(object, data!("constructor"),
+                new_function(global_scope as Scope, Object_constructor, null));
+
             return object;
+        }
+
+        fn setup_object_constructor(constructor: Function) {
+            set_property(constructor, data!("create"),
+                new_function(global_scope as Scope, Object_create, null));
         }
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             return new_static_string(data!("[object Object]"), 15);
+        }
+
+        fn Object_create(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let object: Object = new_object();
+            object.own_prototype = arguments[0];
+            return object;
+        }
+
+        fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // this is wrong, but for now I need to have anything that works
+            return new_object();
         }
 
         fn create_function_prototype() -> Object {
@@ -256,6 +276,45 @@ pub fn generate_module() -> WatModule {
 
         fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             return new_static_string(data!("function () { [native code] }"), 29);
+        }
+
+        fn create_number_prototype() -> Object {
+            let object: Object = new_object();
+
+            set_property(object, data!("toString"),
+                new_function(global_scope as Scope, Number_toString, null));
+
+            return object;
+        }
+
+        fn Number_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: we first write to memory and then extract to an array. it will be better
+            // to build two versions of methods that convert stuff - one that writes to memory and
+            // one that writes to an array
+            return number_to_string_raw(this as Number);
+        }
+
+        fn number_to_string_raw(number: Number) -> String {
+            let written_length: i32 = writeF64AsAscii(number.value, free_memory_offset);
+            return memory_to_string(free_memory_offset, written_length);
+        }
+
+        fn memory_to_string(offset: i32, length: i32) -> String {
+            let string_data: CharArray = [0; length];
+
+            // TODO: technically we could read bigger values and split them into i8s
+            let mut i: i32 = 0;
+            while i < length {
+                string_data[i] = memory::<i8>[offset + i];
+                i += 1;
+            }
+
+            return String {
+                data: string_data,
+                length: length,
+            };
+
+
         }
 
         fn add_to_promise_chain(target_promise: Promise, promise: Promise) {
@@ -704,19 +763,19 @@ pub fn generate_module() -> WatModule {
         fn assign_variable(scope: Scope, name: i32, value: anyref) {
             let mut current_scope: Nullable<Scope> = scope;
             let found_value: anyref;
+            let mut run: i32 = 1;
 
-            while 1 {
+            while run {
                 found_value = hashmap_get(current_scope.variables, name);
                 if is_no_value_found(found_value) {
                     current_scope = current_scope.parent;
                     if ref_test!(current_scope, null) {
                         throw!(JSException, name as i31ref);
                     }
-                    continue;
+                } else {
+                    set_variable(current_scope as Scope, name, value);
+                    run = 0;
                 }
-
-                set_variable(current_scope as Scope, name, value);
-                break;
             }
 
             // TODO: if there's no variable found JS still lets you assign, but
@@ -771,6 +830,15 @@ pub fn generate_module() -> WatModule {
             return 0;
         }
 
+        fn create_reference_error(name: i32) -> anyref {
+            let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
+            let object: Object = new_object();
+            let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 24));
+            call_function(constructor, object, arguments);
+
+            return return_new_instance_result(object, null, get_property(constructor, data!("prototype")));
+        }
+
         fn get_variable(scope: Scope, name: i32) -> anyref {
             let mut current_scope: Nullable<Scope> = scope;
             let value: anyref;
@@ -780,7 +848,9 @@ pub fn generate_module() -> WatModule {
                 if is_no_value_found(value) {
                     current_scope = current_scope.parent;
                     if ref_test!(current_scope, null) {
-                        throw!(JSException, name as i31ref);
+                        // TODO: this should throw reference error, but we have to implement it in
+                        // here, not in JS
+                        throw!(JSException, 999999999 as i31ref);
                     }
                 } else {
                     return value;
@@ -841,12 +911,14 @@ pub fn generate_module() -> WatModule {
                         }
                     }
                 }
+            } else if ref_test!(target, Number) {
+                // numbers don't have their own properties, but use the Number prototype
+                result = get_property(global_number_prototype, name);
             }
 
             if ref_test!(result, i31ref) {
                 if (result as i31ref) == -1 {
-                    let message: i32 = 100000 + name;
-                    throw!(JSException, message as i31ref);
+                    return result;
                 }
             }
 
@@ -894,7 +966,7 @@ pub fn generate_module() -> WatModule {
                     if entry.key == key {
                         entry.value = value;
                         found = 1;
-                        break;
+                        return;
                     }
                 }
                 i += 1;
@@ -938,7 +1010,7 @@ pub fn generate_module() -> WatModule {
                 if entries[i].key == key {
                     entries[i] = new_entry;
                     found = 1;
-                    break;
+                    return;
                 }
                 i += 1;
             }
@@ -1078,6 +1150,16 @@ pub fn generate_module() -> WatModule {
         }
 
         fn strict_equal(arg1: anyref, arg2: anyref) -> i31ref {
+            let mut i: i32 = 0;
+            let mut len: i32 = 0;
+            let str1: String;
+            let str2: String;
+            let static_str1: StaticString;
+            let static_str2: StaticString;
+            let char_array1: CharArray;
+            let char_array2: CharArray;
+            let offset: i32;
+
             if ref_test!(arg1, null) && ref_test!(arg2, null) {
                 return 1 as i31ref;
             }
@@ -1095,6 +1177,127 @@ pub fn generate_module() -> WatModule {
             if ref_test!(arg1, i31ref) && ref_test!(arg2, i31ref) {
                 return 1 as i31ref;
             }
+
+            if ref_test!(arg1, String) && ref_test!(arg2, String) {
+                str1 = arg1 as String;
+                str2 = arg2 as String;
+
+                if str1.length != str2.length {
+                    return 0 as i31ref;
+                }
+                len = str1.length;
+                char_array1 = str1.data;
+                char_array2 = str2.data;
+                while i < len {
+                    if char_array1[i] != char_array2[i] {
+                        return 0 as i31ref;
+                    }
+                    i += 1;
+                }
+
+                return 1 as i31ref;
+            }
+
+            if ref_test!(arg1, StaticString) && ref_test!(arg2, StaticString) {
+                static_str1 = arg1 as StaticString;
+                static_str2 = arg2 as StaticString;
+
+                if static_str1.offset != static_str2.offset {
+                    return 0 as i31ref;
+                }
+                return 1 as i31ref;
+            }
+
+            if ref_test!(arg1, String) && ref_test!(arg2, StaticString) {
+                str1 = arg1 as String;
+                static_str2 = arg2 as StaticString;
+
+                if str1.length != static_str2.length {
+                    return 0 as i31ref;
+                }
+                len = str1.length;
+                offset = static_str2.offset;
+                char_array1 = str1.data;
+                while i < len {
+                    if char_array1[i] != memory::<i8>[offset + i] {
+                        return 0 as i31ref;
+                    }
+                    i += 1;
+                }
+
+                return 1 as i31ref;
+
+            }
+
+            if ref_test!(arg1, StaticString) && ref_test!(arg2, String) {
+                static_str1 = arg1 as StaticString;
+                str2 = arg2 as String;
+
+                if static_str1.length != str2.length {
+                    return 0 as i31ref;
+                }
+                len = static_str1.length;
+                offset = static_str1.offset;
+                char_array2 = str2.data;
+                while i < len {
+                    if memory::<i8>[offset + i] != char_array2[i] {
+                        return 0 as i31ref;
+                    }
+                    i += 1;
+                }
+
+                return 1 as i31ref;
+            }
+
+            return 0 as i31ref;
+        }
+
+        fn is_a_string(arg: anyref) -> i32 {
+            return ref_test!(arg, String) || ref_test!(arg, StaticString);
+        }
+
+        fn is_null_or_undefined(arg: anyref) -> i32 {
+            if ref_test!(arg, null) {
+                return 1;
+            }
+
+            if ref_test!(arg, i31ref) {
+                return (arg as i31ref == 2);
+            }
+
+            return 0;
+        }
+
+        fn loose_equal(arg1: anyref, arg2: anyref) -> i31ref {
+            if (ref_test!(arg1, null) && ref_test!(arg2, null)) ||
+               (is_a_string(arg1) && is_a_string(arg2)) ||
+               (ref_test!(arg1, Number) && ref_test!(arg2, Number)) {
+                return strict_equal(arg1, arg2);
+            }
+
+            if is_null_or_undefined(arg1) && is_null_or_undefined(arg2) {
+                return 1 as i31ref;
+            }
+
+            // TODO: this is wrong, it should be a string converted to a number
+            if ref_test!(arg1, Number) && is_a_string(arg2) {
+                return strict_equal(number_to_string_raw(arg1 as Number), arg2);
+            }
+
+            if is_a_string(arg1) && ref_test!(arg2, Number) {
+                return strict_equal(arg1, number_to_string_raw(arg2 as Number));
+            }
+
+            // TODO: implement the rest of the cases
+            // if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
+            //     let num1: Number = arg1 as Number;
+            //     let num2: Number = arg2 as Number;
+            //     return (num1.value == num2.value) as i31ref;
+            // }
+            //
+            // if ref_test!(arg1, i31ref) && ref_test!(arg2, i31ref) {
+            //     return 1 as i31ref;
+            // }
 
             return 0 as i31ref;
         }
@@ -1276,6 +1479,11 @@ pub fn generate_module() -> WatModule {
                     remaining_frac = remaining_frac - digit as f64;
                     precision = precision + 1;
                 }
+
+                // walk back to remove trailing zeroes
+                while memory::<i8>[current_offset - 1] == '0' {
+                    current_offset -= 1;
+                }
             }
 
             return current_offset - offset;
@@ -1319,8 +1527,8 @@ pub fn generate_module() -> WatModule {
                 if ref_test!(current, null) == 0 && ref_test!(current, i31ref) {
                     val = current as i31ref as i32;
                     if val == 0 {
-                        memory[iovectors_offset] = data!("null");
-                        memory[iovectors_offset + 4] = 4;
+                        memory[iovectors_offset] = data!("false");
+                        memory[iovectors_offset + 4] = 5;
                         iovectors_offset += 8;
                         handled = 1;
                     } else if val == 1 {
@@ -1329,8 +1537,8 @@ pub fn generate_module() -> WatModule {
                         iovectors_offset += 8;
                         handled = 1;
                     } else if val == 2 {
-                        memory[iovectors_offset] = data!("false");
-                        memory[iovectors_offset + 4] = 5;
+                        memory[iovectors_offset] = data!("null");
+                        memory[iovectors_offset + 4] = 4;
                         iovectors_offset += 8;
                         handled = 1;
                     } else {
@@ -1533,6 +1741,19 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, 20001 as i31ref);
         }
 
+        fn try_i31ref(r: anyref) -> i31ref {
+            if ref_test!(r, i31ref) {
+                return r as i31ref;
+            }
+            let result: i32 = -1;
+            return result as i31ref;
+        }
+
+        fn op_minus(arg: anyref) -> Number {
+            // TODO: just a stup for now
+            return new_number(1);
+        }
+
         // This is not how the run loop will run in the future. `poll_many`
         // is supposed to wait for the next pollable to resolve, thus blocking
         // the execution. In order to do that on the host there has to be a way
@@ -1568,12 +1789,18 @@ pub fn generate_module() -> WatModule {
             promise_prototype = create_promise_prototype();
             global_object_prototype = create_object_prototype();
             global_function_prototype = create_function_prototype();
+            global_number_prototype = create_number_prototype();
 
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
+            let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
 
             set_property(promise_constructor, data!("prototype"), promise_prototype);
+            set_property(object_constructor, data!("prototype"), global_object_prototype);
 
             set_variable(global_scope as Scope, data!("Promise"), promise_constructor);
+            set_variable(global_scope as Scope, data!("Object"), object_constructor);
+
+            setup_object_constructor(object_constructor);
         }
 
         #[export("wasi:cli/run@0.2.1#run")]

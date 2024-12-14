@@ -4,11 +4,11 @@ use boa_ast::{
     expression::{
         self,
         access::PropertyAccess,
-        literal::{ArrayLiteral, Literal, ObjectLiteral},
+        literal::{ArrayLiteral, Literal, ObjectLiteral, TemplateLiteral},
         operator::{
             binary::{ArithmeticOp, BinaryOp, LogicalOp},
             update::UpdateTarget,
-            Assign, Binary, Unary, Update,
+            Assign, Binary, Conditional, Unary, Update,
         },
         Await, Call, Expression, Identifier, New, Parenthesized,
     },
@@ -554,6 +554,7 @@ impl WasmTranslator {
                         }
                     }
                     PropertyAccessField::Expr(expression) => {
+                        dbg!(&expression);
                         todo!()
                         // let expr_result_var =
                         //     self.current_function().add_local("$expr_result", WasmType::Anyref);
@@ -612,7 +613,9 @@ impl WasmTranslator {
             }
             Expression::AsyncGenerator(_async_generator) => todo!(),
             Expression::Class(_class) => todo!(),
-            Expression::TemplateLiteral(_template_literal) => todo!(),
+            Expression::TemplateLiteral(template_literal) => {
+                self.translate_template_literal(template_literal)
+            }
             Expression::PropertyAccess(property_access) => {
                 self.translate_property_access(property_access, None)
             }
@@ -632,12 +635,38 @@ impl WasmTranslator {
             Expression::Update(update) => self.translate_update(update),
             Expression::Binary(binary) => self.translate_binary(binary),
             Expression::BinaryInPrivate(_binary_in_private) => todo!(),
-            Expression::Conditional(_conditional) => todo!(),
+            Expression::Conditional(conditional) => self.translate_conditional(conditional),
             Expression::Await(await_expr) => self.translate_await_expression(await_expr),
             Expression::Yield(_) => todo!(),
             Expression::Parenthesized(parenthesized) => self.translate_parenthesized(parenthesized),
             _ => todo!(),
         }
+    }
+
+    fn translate_template_literal(&mut self, lit: &TemplateLiteral) -> InstructionsList {
+        let (offset, length) = self.insert_data_string("template literal");
+        vec![
+            W::I32Const(offset),
+            W::I32Const(length),
+            W::call("$new_static_string"),
+        ]
+    }
+    fn translate_conditional(&mut self, conditional: &Conditional) -> InstructionsList {
+        let result_local = self
+            .current_function()
+            .add_local("$result", WasmType::Anyref);
+        let mut instructions = self.translate_expression(conditional.condition(), true);
+        instructions.push(W::I31GetS);
+
+        let mut then_instructions = self.translate_expression(conditional.if_true(), true);
+        then_instructions.push(W::local_set(&result_local));
+        let mut else_instructions = self.translate_expression(conditional.if_false(), true);
+        else_instructions.push(W::local_set(&result_local));
+
+        instructions.push(W::r#if(then_instructions, Some(else_instructions)));
+        instructions.push(W::local_get(&result_local));
+
+        instructions
     }
 
     fn translate_await_expression(&mut self, await_expression: &Await) -> InstructionsList {
@@ -1161,18 +1190,50 @@ impl WasmTranslator {
     fn translate_unary(&mut self, unary: &Unary) -> InstructionsList {
         use boa_ast::expression::operator::unary::UnaryOp;
 
-        let mut target = self.translate_expression(unary.target(), true);
-        match unary.op() {
-            UnaryOp::Minus => todo!(),
-            UnaryOp::Plus => todo!(),
-            UnaryOp::Not => target.push(W::call("$logical_not")),
-            UnaryOp::Tilde => todo!(),
-            UnaryOp::TypeOf => target.push(W::call("$type_of")),
-            UnaryOp::Delete => todo!(),
-            UnaryOp::Void => todo!(),
-        }
+        if let UnaryOp::TypeOf = unary.op() {
+            let result_local = self
+                .current_function()
+                .add_local("$result", WasmType::Anyref);
+            let (offset, length) = self.insert_data_string("undefined");
+            let mut target = self.translate_expression(unary.target(), true);
+            target.push(W::call("$type_of"));
+            target.push(W::local_set(&result_local));
+            let catch_instructions = vec![
+                W::call("$try_i31ref"),
+                W::I31GetS,
+                W::I32Const(999999999),
+                W::I32Eq,
+                // it's a reference error, return unddefined
+                W::r#if(
+                    vec![
+                        W::i32_const(offset),
+                        W::i32_const(length),
+                        W::call("$new_static_string"),
+                        W::local_set(&result_local),
+                    ],
+                    None,
+                ),
+            ];
+            let instr = W::r#try(
+                target,
+                vec![("$JSException".to_string(), catch_instructions)],
+                None,
+            );
+            vec![instr, W::local_get(&result_local)]
+        } else {
+            let mut target = self.translate_expression(unary.target(), true);
+            match unary.op() {
+                UnaryOp::Minus => target.push(W::call("$op_minus")),
+                UnaryOp::Plus => todo!(),
+                UnaryOp::Not => target.push(W::call("$logical_not")),
+                UnaryOp::Tilde => todo!(),
+                UnaryOp::TypeOf => unreachable!(),
+                UnaryOp::Delete => todo!(),
+                UnaryOp::Void => todo!(),
+            }
 
-        target
+            target
+        }
     }
 
     fn translate_literal(&mut self, lit: &Literal) -> InstructionsList {
@@ -1284,9 +1345,11 @@ impl WasmTranslator {
             Statement::ForLoop(_for_loop) => todo!(),
             Statement::ForInLoop(_for_in_loop) => todo!(),
             Statement::ForOfLoop(_for_of_loop) => todo!(),
-            Statement::Switch(_switch) => todo!(),
+            Statement::Switch(switch) => self.translate_switch_statement(switch),
             Statement::Continue(_) => todo!(),
-            Statement::Break(_) => todo!(),
+            // this is wrong, but I just need to make it work with a switch now
+            // TODO: fix
+            Statement::Break(_) => vec![W::br("$switch-block")],
             Statement::Return(ret) => self.translate_return(ret),
             Statement::Labelled(_labelled) => todo!(),
             Statement::Throw(throw) => self.translate_throw(throw),
@@ -1372,6 +1435,71 @@ impl WasmTranslator {
             ),
         ]);
         result
+    }
+
+    fn translate_switch_statement(&mut self, switch: &Switch) -> InstructionsList {
+        let value_local = self
+            .current_function()
+            .add_local("$value", WasmType::Anyref);
+        let fall_through_local = self
+            .current_function()
+            .add_local("$fall_through", WasmType::I32);
+        let matches_local = self.current_function().add_local("$matches", WasmType::I32);
+        let mut instructions = self.translate_expression(switch.val(), true);
+
+        instructions.push(W::local_set(&value_local));
+        instructions.push(W::I32Const(0));
+        instructions.push(W::local_set(&fall_through_local));
+        instructions.push(W::I32Const(0));
+        instructions.push(W::local_set(&matches_local));
+
+        let mut cases_instructions = vec![];
+
+        for case in switch.cases() {
+            let mut if_instructions = vec![W::I32Const(1), W::local_set(&fall_through_local)];
+            for statement in case.body().statements() {
+                if_instructions.append(&mut self.translate_statement_list_item(statement));
+            }
+
+            // if we haven't fallen through, check the condition
+            let mut condition_instructions = vec![];
+            condition_instructions.push(W::local_get(&value_local));
+            if let Some(expr) = case.condition() {
+                condition_instructions.append(&mut self.translate_expression(expr, true));
+            } else {
+                condition_instructions.push(W::I32Const(1));
+                condition_instructions.push(W::ref_i31());
+            }
+            condition_instructions.push(W::call("$strict_equal"));
+            condition_instructions.push(W::call("$cast_ref_to_i32_bool"));
+            // if the conditions match, set fall through to 1
+            condition_instructions.push(W::r#if(
+                vec![W::I32Const(1), W::local_set(&fall_through_local)],
+                None,
+            ));
+
+            cases_instructions.push(W::local_get(&fall_through_local));
+            cases_instructions.push(W::I32Eqz);
+            cases_instructions.push(W::r#if(condition_instructions, None));
+
+            cases_instructions.push(W::local_get(&fall_through_local));
+            cases_instructions.push(W::r#if(if_instructions, None))
+        }
+
+        if let Some(default_statements) = switch.default() {
+            for statement in default_statements.statements() {
+                cases_instructions.append(&mut self.translate_statement_list_item(statement));
+            }
+        }
+
+        // putting it in a block should allow to use break out of the box
+        instructions.push(W::block(
+            "$switch-block",
+            Signature::default(),
+            cases_instructions,
+        ));
+
+        instructions
     }
 
     fn translate_while_loop(&mut self, while_loop: &WhileLoop) -> InstructionsList {
@@ -1469,9 +1597,12 @@ fn main() -> anyhow::Result<()> {
     let mut js_code = String::new();
     io::stdin().read_to_string(&mut js_code)?;
 
+    let js_include = include_str!("js/prepend.js");
+    let full = format!("{js_include}\n{js_code}");
+
     let mut interner = Interner::default();
 
-    let mut parser = Parser::new(Source::from_bytes(&js_code));
+    let mut parser = Parser::new(Source::from_bytes(&full));
     let ast = parser
         .parse_script(&mut interner)
         .map_err(|e| anyhow!("JAWSM parsing error: {e}"))?;
