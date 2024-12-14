@@ -1,8 +1,9 @@
 "use strict";
 
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const { execFile } = require("child_process");
+const { existsSync } = require("fs");
+const fs = require("fs");
+const path = require("path");
 
 let instance,
   pollables = [],
@@ -10,13 +11,17 @@ let instance,
   scriptResult,
   pollablesToWaitForLength = 0;
 
-const jsFile = process.argv[2];
+// This is a hack to run test262 harness as jsshell. It gets '-r' as a second
+// argument
+const jsFile = process.argv[2] !== "-r" ? process.argv[2] : process.argv[3];
+
 if (!jsFile) {
-  console.error('Please provide a JavaScript file path');
+  console.error("Please provide a JavaScript file path");
   process.exit(1);
 }
 
-const jawsmPath = process.env.JAWSM_PATH || path.join(__dirname, '../target/release/jawsm');
+const jawsmPath =
+  process.env.JAWSM_PATH || path.join(__dirname, "../target/release/jawsm");
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -149,20 +154,28 @@ const importObject = {
 };
 
 async function runJawsm(jsFile) {
+  // Verify paths exist before trying to execute
+  if (!existsSync(jawsmPath)) {
+    throw new Error(`jawsm binary not found at: ${jawsmPath}`);
+  }
+  if (!existsSync(jsFile)) {
+    throw new Error(`JavaScript file not found: ${process.argv}`);
+  }
+
   return new Promise((resolve, reject) => {
-    const chunks = [];
-    const jawsm = spawn(jawsmPath, [jsFile]);
-    
-    jawsm.stdout.on('data', (chunk) => chunks.push(chunk));
-    jawsm.stderr.on('data', (data) => console.error(`jawsm error: ${data}`));
-    
-    jawsm.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`jawsm exited with code ${code}`));
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
+    execFile(
+      jawsmPath,
+      [jsFile],
+      { maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error(`jawsm stderr: ${stderr}`);
+          reject(error);
+          return;
+        }
+        resolve(Buffer.from(stdout));
+      },
+    );
   });
 }
 
