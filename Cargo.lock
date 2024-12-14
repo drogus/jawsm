@@ -1025,6 +1025,7 @@ dependencies = [
 [[package]]
 name = "tarnik"
 version = "0.1.0"
+source = "git+https://github.com/drogus/tarnik#28ed95a622478f9ea17af601e9891e38f47dcc4c"
 dependencies = [
  "anyhow",
  "convert_case",
@@ -1039,6 +1040,7 @@ dependencies = [
 [[package]]
 name = "tarnik-ast"
 version = "0.1.0"
+source = "git+https://github.com/drogus/tarnik#28ed95a622478f9ea17af601e9891e38f47dcc4c"
 dependencies = [
  "indexmap 2.6.0",
 ]
