@@ -1594,9 +1594,15 @@ impl<'a> Visitor<'a> for WasmTranslator {
 }
 
 fn main() -> anyhow::Result<()> {
-    let mut js_code = String::new();
-    io::stdin().read_to_string(&mut js_code)?;
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        return Err(anyhow!("Please provide a JavaScript file path"));
+    }
 
+    let js_path = &args[1];
+    let output_path = args.get(2);
+    
+    let js_code = std::fs::read_to_string(js_path)?;
     let js_include = include_str!("js/prepend.js");
     let full = format!("{js_include}\n{js_code}");
 
@@ -1632,10 +1638,16 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let jawsm_dir = std::env::var("JAWSM_DIR").unwrap_or(".".into());
-    let mut f = File::create(Path::new(&jawsm_dir).join("wat/generated.wat")).unwrap();
-    f.write_all(module.to_string().as_bytes()).unwrap();
+    let binary = wat::parse_str(module.to_string())?;
+    
+    match output_path {
+        Some(path) => {
+            std::fs::write(path, &binary)?;
+        }
+        None => {
+            io::stdout().write_all(&binary)?;
+        }
+    }
 
-    // println!("WAT modules generated successfully!");
     Ok(())
 }
