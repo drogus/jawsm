@@ -600,6 +600,7 @@ dependencies = [
  "tera",
  "tinytemplate",
  "walrus",
+ "wat",
 ]
 
 [[package]]
@@ -1024,6 +1025,7 @@ dependencies = [
 [[package]]
 name = "tarnik"
 version = "0.1.0"
+source = "git+https://github.com/drogus/tarnik#1cd30317e2621b15610e21a9b774a8c99fc5c94a"
 dependencies = [
  "anyhow",
  "convert_case",
@@ -1038,6 +1040,7 @@ dependencies = [
 [[package]]
 name = "tarnik-ast"
 version = "0.1.0"
+source = "git+https://github.com/drogus/tarnik#1cd30317e2621b15610e21a9b774a8c99fc5c94a"
 dependencies = [
  "indexmap 2.6.0",
 ]
@@ -1179,6 +1182,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
+name = "unicode-width"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1206,8 +1215,8 @@ dependencies = [
  "leb128",
  "log",
  "walrus-macro",
- "wasm-encoder",
- "wasmparser",
+ "wasm-encoder 0.212.0",
+ "wasmparser 0.212.0",
 ]
 
 [[package]]
@@ -1293,6 +1302,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-encoder"
+version = "0.221.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c17a3bd88f2155da63a1f2fcb8a56377a24f0b6dfed12733bb5f544e86f690c5"
+dependencies = [
+ "leb128",
+ "wasmparser 0.221.2",
+]
+
+[[package]]
 name = "wasmparser"
 version = "0.212.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1304,6 +1323,39 @@ dependencies = [
  "indexmap 2.6.0",
  "semver",
  "serde",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.221.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9845c470a2e10b61dd42c385839cdd6496363ed63b5c9e420b5488b77bd22083"
+dependencies = [
+ "bitflags",
+ "indexmap 2.6.0",
+ "semver",
+]
+
+[[package]]
+name = "wast"
+version = "221.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcc4470b9de917ba199157d1f0ae104f2ae362be728c43e68c571c7715bd629e"
+dependencies = [
+ "bumpalo",
+ "leb128",
+ "memchr",
+ "unicode-width",
+ "wasm-encoder 0.221.2",
+]
+
+[[package]]
+name = "wat"
+version = "1.221.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1f3c6d82af47286494c6caea1d332037f5cbeeac82bbf5ef59cb8c201c466e"
+dependencies = [
+ "wast",
 ]
 
 [[package]]
