@@ -34,3 +34,5 @@ ReferenceError.prototype.constructor = ReferenceError;
 //   console.log(e.toString()); // "ReferenceError: test"
 //   // console.log(e.stack); // Shows stack trace
 // }
+
+const globalThis = {};

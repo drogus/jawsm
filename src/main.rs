@@ -65,6 +65,10 @@ fn gen_function_name(s: Option<String>) -> String {
         .collect();
 
     if let Some(s) = s {
+        let s = s
+            .strip_prefix("get ")
+            .or_else(|| s.strip_prefix("set "))
+            .unwrap_or(&s);
         format!("{s}-{r}")
     } else {
         format!("function-{r}")
@@ -241,6 +245,14 @@ impl WasmTranslator {
     }
 
     fn translate_function(&mut self, fun: &Function) -> InstructionsList {
+        self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
+    }
+
+    fn translate_get_function(&mut self, fun: &Function) -> InstructionsList {
+        self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
+    }
+
+    fn translate_set_function(&mut self, fun: &Function) -> InstructionsList {
         self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
     }
 
@@ -521,9 +533,9 @@ impl WasmTranslator {
                 match simple_property_access.field() {
                     PropertyAccessField::Const(sym) => {
                         let offset = self.add_symbol(*sym);
+                        let temp = self.current_function().add_local("$temp", WasmType::Anyref);
 
                         if let Some(mut assign_instructions) = assign {
-                            let temp = self.current_function().add_local("$temp", WasmType::Anyref);
                             let mut result = vec![];
                             result.append(&mut assign_instructions);
                             result.push(W::local_set(&temp));
@@ -531,14 +543,15 @@ impl WasmTranslator {
                             result.append(&mut vec![
                                 W::i32_const(offset),
                                 W::local_get(&temp),
-                                W::call("$create_property"),
-                                W::call("$set_property"),
+                                W::call("$set_property_value"),
                             ]);
                             result
                         } else {
                             target.append(&mut vec![
+                                W::local_tee(&temp),
                                 W::i32_const(offset),
                                 W::call("$get_property"),
+                                W::local_get(&temp),
                                 W::call("$get_property_value"),
                             ]);
                             target
@@ -558,26 +571,15 @@ impl WasmTranslator {
                             result.append(&mut target);
                             result.append(&mut instructions);
                             result.append(&mut assign_instructions);
-                            result.append(&mut vec![
-                                W::call("$create_property"),
-                                W::call("$set_property_str"),
-                            ]);
+                            result.append(&mut vec![W::call("$set_property_value_str")]);
                             result
                         } else {
                             target.append(&mut instructions);
                             target.push(W::call("$get_property_str"));
+                            target.push(W::local_get(&target_local));
                             target.push(W::call("$get_property_value"));
                             target
                         }
-
-                        //
-                        //  TODO:
-                        //
-                        //  we need to:
-                        //  1. create a function to convert various types to string
-                        //  2. create a way to put those strings into an array (on an object
-                        // itself, most probably)
-                        //  3. use the mappings to translate string access into i32 access
                     }
                 }
             }
@@ -976,8 +978,7 @@ impl WasmTranslator {
                         W::local_get(&new_instance),
                         W::i32_const(offset),
                         W::local_get(&temp),
-                        W::call("$create_property"),
-                        W::call("$set_property"),
+                        W::call("$set_property_value"),
                     ]);
                     result
                 }
@@ -990,8 +991,7 @@ impl WasmTranslator {
                             W::local_get(&new_instance),
                             W::i32_const(offset),
                             W::local_get(&temp),
-                            W::call("$create_property"),
-                            W::call("$set_property"),
+                            W::call("$set_property_value"),
                         ]);
                         result
                     }
@@ -1000,24 +1000,42 @@ impl WasmTranslator {
                 PropertyDefinition::MethodDefinition(property_name, method_definition) => {
                     match property_name {
                         PropertyName::Literal(sym) => {
-                            let offset = self.add_symbol(*sym);
+                            let mut offset = self.add_symbol(*sym);
                             let func_instr = match method_definition {
-                                boa_ast::property::MethodDefinition::Get(_) => todo!(),
-                                boa_ast::property::MethodDefinition::Set(_) => todo!(),
+                                boa_ast::property::MethodDefinition::Get(function) => {
+                                    let mut instructions = self.translate_get_function(function);
+                                    instructions.push(W::local_get(&new_instance));
+                                    instructions.push(W::i32_const(offset));
+                                    instructions.push(W::call("$create_get_property"));
+                                    instructions
+                                }
+                                boa_ast::property::MethodDefinition::Set(function) => {
+                                    let mut instructions = self.translate_set_function(function);
+                                    instructions.push(W::local_get(&new_instance));
+                                    instructions.push(W::i32_const(offset));
+                                    instructions.push(W::call("$create_set_property"));
+                                    instructions
+                                }
                                 boa_ast::property::MethodDefinition::Ordinary(function) => {
-                                    self.translate_function(function)
+                                    let mut instructions = self.translate_function(function);
+                                    instructions.push(W::call("$create_property"));
+                                    instructions
                                 }
                                 boa_ast::property::MethodDefinition::Generator(_) => todo!(),
                                 boa_ast::property::MethodDefinition::AsyncGenerator(_) => todo!(),
                                 boa_ast::property::MethodDefinition::Async(_) => todo!(),
                             };
+
+                            let temp_prop = self.current_function().add_local(
+                                "$temp_prop",
+                                WasmType::Ref("$Property".to_string(), Nullable::False),
+                            );
                             let mut result = func_instr;
                             result.append(&mut vec![
-                                W::local_set(&temp),
+                                W::local_set(&temp_prop),
                                 W::local_get(&new_instance),
                                 W::i32_const(offset),
-                                W::local_get(&temp),
-                                W::call("$create_property"),
+                                W::local_get(&temp_prop),
                                 W::call("$set_property"),
                             ]);
                             result
@@ -1057,6 +1075,7 @@ impl WasmTranslator {
             W::local_tee(&constructor),
             W::I32Const(self.insert_data_string("prototype").0),
             W::call("$get_property"),
+            W::local_get(&constructor),
             W::call("$get_property_value"),
             W::local_set(&prototype_local),
         ];

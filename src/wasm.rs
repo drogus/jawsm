@@ -32,8 +32,8 @@ pub fn generate_module() -> WatModule {
         static PROPERTY_IS_SETTER: i32    = 0b00010000;
 
         struct Property {
-            value: anyref,
-            flags: i32
+            value: mut anyref,
+            flags: mut i32
         }
 
         struct PropertyMapEntry {
@@ -107,6 +107,11 @@ pub fn generate_module() -> WatModule {
             this: mut anyref,
             properties: mut PropertyMap,
             own_prototype: mut anyref,
+        }
+
+        struct AccessorMethod {
+            get: mut Nullable<Function>,
+            set: mut Nullable<Function>,
         }
 
         // Object types
@@ -724,6 +729,52 @@ pub fn generate_module() -> WatModule {
             };
         }
 
+        fn create_get_property(value: anyref, target: anyref, name: i32) -> Property {
+            let property: Nullable<Property> = get_property(target, name);
+
+            if ref_test!(property, null) {
+                let new_property: Property = create_property(AccessorMethod {
+                    get: value as Function,
+                    set: null
+                });
+                new_property.flags = new_property.flags | PROPERTY_IS_GETTER;
+                return new_property;
+            } else {
+                let existing_property: Property = property as Property;
+                let accessor: AccessorMethod = existing_property.value as AccessorMethod;
+                accessor.get = value as Function;
+                // TODO: check if the existing property is a getter, otherwise we need to throw an
+                // error
+                existing_property.flags = existing_property.flags | PROPERTY_IS_GETTER;
+                return existing_property;
+            }
+
+            throw!(JSException, 54545454 as i31ref);
+        }
+
+        fn create_set_property(value: anyref, target: anyref, name: i32) -> Property {
+            let property: Nullable<Property> = get_property(target, name);
+
+            if ref_test!(property, null) {
+                let new_property: Property = create_property(AccessorMethod {
+                    get: null,
+                    set: value as Function
+                });
+                new_property.flags = new_property.flags | PROPERTY_IS_SETTER;
+                return new_property;
+            } else {
+                let existing_property: Property = property as Property;
+                let accessor: AccessorMethod = existing_property.value as AccessorMethod;
+                accessor.set = value as Function;
+                // TODO: check if the existing property is a getter, otherwise we need to throw an
+                // error
+                existing_property.flags = existing_property.flags | PROPERTY_IS_SETTER;
+                return existing_property;
+            }
+
+            throw!(JSException, 4545454 as i31ref);
+        }
+
         fn create_property_function(scope: Scope, function: JSFunc, this: anyref) -> Property {
             return create_property(new_function(scope, function, this));
         }
@@ -931,7 +982,7 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, 103 as i31ref);
         }
 
-        fn get_property_str(target: anyref, name: anyref) -> anyref {
+        fn get_property_str(target: anyref, name: anyref) -> Nullable<Property> {
             let offset: i32;
 
             if ref_test!(name, String) {
@@ -941,27 +992,33 @@ pub fn generate_module() -> WatModule {
             } else {
                 // should we try to convert to string again?
                 // TODO: implement
-                let result: i32 = -1;
-                return result as i31ref;
+                return null as Nullable<Property>;
             }
 
             if offset != 0 {
                 return get_property(target, offset);
             }
 
-            let result: i32 = -1;
-            return result as i31ref;
+            return null as Nullable<Property>;
         }
 
-        fn get_property_value(property: anyref) -> anyref {
-            if ref_test!(property, Property) {
-                return (property as Property).value;
+        fn get_property_value(property_arg: anyref, target: anyref) -> anyref {
+            if ref_test!(property_arg, Property) {
+                let property: Property = property_arg as Property;
+                if (property.flags & PROPERTY_IS_GETTER) != 0 {
+                    let accessor: AccessorMethod = property.value as AccessorMethod;
+                    let function: Function = accessor.get as Function;
+                    let value: anyref = call_function(function, target, create_arguments_0());
+                    return value;
+                } else {
+                    return property.value;
+                }
             }
 
-            throw!(JSException, 7878787 as i31ref);
+            return null;
         }
 
-        fn set_property_str(target: anyref, name: anyref, value: Property) {
+        fn set_property_value_str(target: anyref, name: anyref, value: anyref) {
             let offset: i32;
 
             if ref_test!(name, String) {
@@ -974,7 +1031,7 @@ pub fn generate_module() -> WatModule {
             }
 
             if offset != 0 {
-                set_property(target, offset, value);
+                set_property_value(target, offset, value);
 
                 return;
             }
@@ -984,11 +1041,12 @@ pub fn generate_module() -> WatModule {
         }
 
         // TODO: this should also handle prototypes
-        fn get_property(target: anyref, name: i32) -> anyref {
-            let mut result: anyref;
+        fn get_property(target: anyref, name: i32) -> Nullable<Property> {
+            let mut result: Nullable<Property> = null;
             let promise: Promise;
             let function: Function;
             let object: Object;
+            let property: Property;
 
             // TODO: as long as objects like Function and String are just another objects
             // we will have to reimplement a lot of stuff like this. It would be great
@@ -996,43 +1054,25 @@ pub fn generate_module() -> WatModule {
             if ref_test!(target, Object) {
                 object = target as Object;
                 result = propertymap_get(object.properties, name);
-                if ref_test!(result, i31ref) {
-                    if !ref_test!(result, null) {
-                        if (result as i31ref) == -1 {
-                            // if the result is i31ref -1, it means nothing was found, so
-                            // we need to search prototypes
-                            if !ref_test!(object.own_prototype, null) {
-                                result = get_property(object.own_prototype, name);
-                            }
-                        }
+                if ref_test!(result, null) {
+                    if !ref_test!(object.own_prototype, null) {
+                        result = get_property(object.own_prototype, name);
                     }
                 }
             } else if ref_test!(target, Function) {
                 function = target as Function;
                 result = propertymap_get(function.properties, name);
-                if ref_test!(result, i31ref) {
-                    if !ref_test!(result, null) {
-                        if (result as i31ref) == -1 {
-                            // if the result is i31ref -1, it means nothing was found, so
-                            // we need to search prototypes
-                            if !ref_test!(function.own_prototype, null) {
-                                result = get_property(function.own_prototype, name);
-                            }
-                        }
+                if ref_test!(result, null) {
+                    if !ref_test!(function.own_prototype, null) {
+                        result = get_property(function.own_prototype, name);
                     }
                 }
             } else if ref_test!(target, Promise) {
                 promise = target as Promise;
                 result = propertymap_get(promise.properties, name);
-                if ref_test!(result, i31ref) {
-                    if !ref_test!(result, null) {
-                        if (result as i31ref) == -1 {
-                            // if the result is i31ref -1, it means nothing was found, so
-                            // we need to search prototypes
-                            if !ref_test!(promise.own_prototype, null) {
-                                result = get_property(promise.own_prototype, name);
-                            }
-                        }
+                if ref_test!(result, null) {
+                    if !ref_test!(promise.own_prototype, null) {
+                        result = get_property(promise.own_prototype, name);
                     }
                 }
             } else if ref_test!(target, Number) {
@@ -1040,36 +1080,67 @@ pub fn generate_module() -> WatModule {
                 result = get_property(global_number_prototype, name);
             }
 
-            if ref_test!(result, i31ref) {
-                if ref_test!(result, null) {
-                    return result;
-                }
-
-                if (result as i31ref) == -1 {
-                    return result;
-                }
+            if ref_test!(result, null) {
+                return null as Nullable<Property>;
             }
 
-            if ref_test!(result, Function) {
-                (result as Function).this = target;
+            // at this point the result has to be a property
+            let property = result as Property;
+            if ref_test!(property.value, Function) {
+                (property.value as Function).this = target;
             }
 
             return result;
         }
 
-        fn set_property(target: anyref, name: i32, value: Property) {
+        fn set_property(target: anyref, name: i32, property: Property) {
             if ref_test!(target, Object) {
-                propertymap_set((target as Object).properties, name, value);
+                propertymap_set((target as Object).properties, name, property);
                 return;
             }
 
             if ref_test!(target, Function) {
-                propertymap_set((target as Function).properties, name, value);
+                propertymap_set((target as Function).properties, name, property);
                 return;
             }
 
             if ref_test!(target, Promise) {
-                propertymap_set((target as Promise).properties, name, value);
+                propertymap_set((target as Promise).properties, name, property);
+                return;
+            }
+
+            throw!(JSException, 99101 as i31ref);
+        }
+
+        fn set_property_value(target: anyref, name: i32, value: anyref) {
+            let property: Nullable<Property> = get_property(target, name);
+            let value_property: Property;
+            if ref_test!(property, null) {
+                value_property = create_property(value);
+                if ref_test!(target, Object) {
+                    propertymap_set((target as Object).properties, name, value_property);
+                    return;
+                }
+
+                if ref_test!(target, Function) {
+                    propertymap_set((target as Function).properties, name, value_property);
+                    return;
+                }
+
+                if ref_test!(target, Promise) {
+                    propertymap_set((target as Promise).properties, name, value_property);
+                    return;
+                }
+            } else {
+                value_property = property as Property;
+                if value_property.flags & PROPERTY_IS_SETTER != 0 {
+                    let accessor: AccessorMethod = value_property.value as AccessorMethod;
+                    let function: Function = accessor.set as Function;
+                    let arguments: JSArgs = create_arguments_1(value);
+                    call_function(function, target, arguments);
+                } else {
+                    value_property.value = value;
+                }
                 return;
             }
 
@@ -1215,7 +1286,7 @@ pub fn generate_module() -> WatModule {
             }
         }
 
-        fn propertymap_get(map: PropertyMap, key: i32) -> anyref {
+        fn propertymap_get(map: PropertyMap, key: i32) -> Nullable<Property> {
             let entries: PropertyEntriesArray = map.entries;
             let mut i: i32 = 0;
 
@@ -1226,17 +1297,7 @@ pub fn generate_module() -> WatModule {
                 i += 1;
             }
 
-            // we need to somehow differentiate between value not being found and the found
-            // value being null
-            // TODO: it would be much easier to check the result on the call site if we
-            // returned a pair of values - i32 and anyref, where i32 is for checking if
-            // the value was found. Tarnik doesn't support multiple return values, so it would
-            // be nice to fix it
-            // TODO: trying to return -1 as i31ref fails, cause tarnik first tries to get
-            // i31.get_s and only then negate. It should be fixed
-            let res_i32: i32 = -1;
-            let res: i31ref = res_i32 as i31ref;
-            return res;
+            return null as Nullable<Property>;
         }
 
         fn hashmap_get(map: HashMap, key: i32) -> anyref {
@@ -2007,7 +2068,7 @@ pub fn generate_module() -> WatModule {
             }
 
             // TODO: handle the case where we don't get anything
-            let to_string_func: Function = get_property(target, data!("toString")) as Function;
+            let to_string_func: Function = (get_property(target, data!("toString")) as Property).value as Function;
             // TODO: handle a case when toString does not return a String
             let result = call_function(to_string_func, target, create_arguments_0());
 
