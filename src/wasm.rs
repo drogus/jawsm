@@ -31,6 +31,30 @@ pub fn generate_module() -> WatModule {
         static PROPERTY_IS_GETTER: i32    = 0b00001000;
         static PROPERTY_IS_SETTER: i32    = 0b00010000;
 
+        type CharArray = [mut i8];
+
+        struct String {
+            data: mut CharArray,
+            length: mut i32
+        }
+
+        struct StaticString {
+            offset: i32,
+            length: i32
+        }
+
+        struct InternedString {
+            value: String,
+            offset: i32,
+        }
+        type InternedStringArray = [mut Nullable<InternedString>];
+
+        struct Interner {
+            entries: mut InternedStringArray,
+            length: mut i32,
+            current_offset: mut i32,
+        }
+
         struct Property {
             value: mut anyref,
             flags: mut i32
@@ -43,20 +67,8 @@ pub fn generate_module() -> WatModule {
         type PropertyEntriesArray = [mut Nullable<PropertyMapEntry>];
         struct PropertyMap {
             entries: mut PropertyEntriesArray,
-            size: mut i32
-        }
-
-        // Basic types for strings
-        type CharArray = [mut i8];
-
-        struct String {
-            data: mut CharArray,
-            length: mut i32
-        }
-
-        struct StaticString {
-            offset: i32,
-            length: i32
+            size: mut i32,
+            interner: Interner,
         }
 
         static VARIABLE_CONST: i32     = 0b00000001;
@@ -90,16 +102,6 @@ pub fn generate_module() -> WatModule {
         type JSArgs = [mut anyref];
         type JSFunc = fn(scope: Scope, this: anyref, arguments: JSArgs) -> anyref;
 
-        struct InternMapEntry {
-            key: CharArray,
-            value: i32
-        }
-        type InternEntriesArray = [mut Nullable<InternMapEntry>];
-        struct InternMap {
-            entries: mut InternEntriesArray,
-            size: mut i32
-        }
-
         struct Function {
             scope: mut Scope,
             func: mut JSFunc,
@@ -117,7 +119,6 @@ pub fn generate_module() -> WatModule {
         struct Object {
             properties: mut PropertyMap,
             own_prototype: mut anyref,
-            // interned: InternMap,
         }
 
         struct Number {
@@ -166,6 +167,7 @@ pub fn generate_module() -> WatModule {
         static mut global_function_prototype: Nullable<Object> = null;
         static mut global_number_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
+        static mut current_string_lookup: Nullable<String> = null;
 
         // Memory management functions required by the Component Model
         #[export("cabi_realloc")]
@@ -665,6 +667,23 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
+        fn convert_static_string_to_string(value: StaticString) -> String {
+            let offset: i32 = value.offset;
+            let length: i32 = value.length;
+            let data: CharArray = [0; length];
+
+            let i: i32 = 0;
+            while i < length {
+                data[i] = memory::<i8>[offset + i];
+                i += 1;
+            }
+
+            return String {
+                data: data,
+                length: length,
+            };
+        }
+
         fn add_static_strings(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> String {
             let total_length: i32 = len1 + len2;
             let string_data: CharArray = [0; total_length];
@@ -741,10 +760,18 @@ pub fn generate_module() -> WatModule {
             };
         }
 
+        fn create_string_from_array(data: CharArray) -> String {
+            return String {
+                data: data,
+                length: len!(data)
+            };
+        }
+
         fn create_propertymap() -> PropertyMap {
             return PropertyMap {
                 entries: [null; 10],
-                size: 0
+                size: 0,
+                interner: create_interner(),
             };
         }
 
@@ -820,12 +847,14 @@ pub fn generate_module() -> WatModule {
             };
         }
 
-        // fn create_intern_map() -> InternMap {
-        //     return InternMap {
-        //         entries: [null, 2],
-        //         size: 0
-        //     };
-        // }
+        fn create_interner() -> Interner {
+            return Interner {
+                entries: [null; 2],
+                size: 0,
+                // interner offsets are negative, to make them different from memory offsets
+                current_offset: -1
+            };
+        }
 
         fn new_array(size: i32) -> Array {
             return Array {
@@ -1043,11 +1072,25 @@ pub fn generate_module() -> WatModule {
                 return null as Nullable<Property>;
             }
 
-            if offset != 0 {
-                return get_property(target, offset);
+            return get_property(target, offset);
+        }
+
+        fn delete_property_str(target: anyref, name: anyref) {
+            let offset: i32;
+
+            if ref_test!(name, String) {
+                offset = get_data_offset_str((name as String).data);
+            } else if ref_test!(name, StaticString) {
+                offset = get_data_offset_static_str(name as StaticString);
+            } else {
+                // should we try to convert to string again?
+                // TODO: implement
+                return;
             }
 
-            return null as Nullable<Property>;
+            if offset != 0 {
+                delete_property(target, offset);
+            }
         }
 
         fn get_property_value(property_arg: anyref, target: anyref) -> anyref {
@@ -1067,25 +1110,77 @@ pub fn generate_module() -> WatModule {
         }
 
         fn set_property_value_str(target: anyref, name: anyref, value: anyref) {
-            let offset: i32;
+            let offset: i32 = 0;
+            let name_str: String = String {
+                data: [0; 0],
+                length: 0
+            };
 
             if ref_test!(name, String) {
                 offset = get_data_offset_str((name as String).data);
+                if offset == 0 {
+                    name_str = name as String;
+                }
             } else if ref_test!(name, StaticString) {
                 offset = get_data_offset_static_str(name as StaticString);
+                if offset == 0 {
+                    name_str = convert_static_string_to_string(name as StaticString);
+                }
             } else {
-                // should we try to convert to string again?
-                // TODO: implement
+                let maybe_to_string: Nullable<Property> =
+                    get_property_str(name, create_string_from_array("toString"));
+                if ref_test!(maybe_to_string, null) {
+                    // we can't convert to string
+                    throw!(JSException, create_string_from_array("Can't convert property name to string"));
+                } else {
+                    let to_string: Property = maybe_to_string as Property;
+                    if ref_test!(to_string.value, Function) {
+                        let result: anyref = call_function(to_string.value as Function, target, create_arguments_0());
+                        if ref_test!(result, String) {
+                            name_str = result as String;
+                            offset = get_data_offset_str(name_str.data);
+                        } else if ref_test!(result, StaticString) {
+                            offset = get_data_offset_static_str(result as StaticString);
+                            if offset == 0 {
+                                name_str = convert_static_string_to_string(result as StaticString);
+                            }
+                        } else {
+                            name_str = convert_to_string(result);
+                            offset = get_data_offset_str(name_str.data);
+                        }
+                    } else {
+                        // toString is not a function, error out
+                        throw!(JSException, create_string_from_array("toString is not a function"));
+                    }
+                }
             }
 
-            if offset != 0 {
-                set_property_value(target, offset, value);
-
-                return;
+            if offset == 0 {
+                current_string_lookup = name_str;
             }
 
-            // It mans we haven't translated the string properly
-            throw!(JSException, 3030303 as i31ref);
+            set_property_value(target, offset, value);
+        }
+
+        fn convert_to_string(value: anyref) -> String {
+            let data: CharArray = [0; 0];
+
+            if ref_test!(value, null) {
+                data = "undefined";
+            } else if ref_test!(value, String) {
+                data = (value as String).data;
+            } else if ref_test!(value, StaticString) {
+                data = convert_static_string_to_string(value as StaticString).data;
+            } else if ref_test!(value, Number) {
+                data = number_to_string_raw(value as Number).data;
+            } else {
+                throw!(JSException, create_string_from_array("Can't convert value to string"));
+            }
+
+            return String {
+                data: data,
+                length: len!(data)
+            };
         }
 
         // TODO: this should also handle prototypes
@@ -1139,6 +1234,27 @@ pub fn generate_module() -> WatModule {
             }
 
             return result;
+        }
+
+        fn delete_property(target: anyref, name: i32) {
+            let mut result: Nullable<Property> = null;
+            let promise: Promise;
+            let function: Function;
+            let object: Object;
+            let property: Property;
+
+            if ref_test!(target, Object) {
+                object = target as Object;
+                propertymap_delete(object.properties, name);
+            } else if ref_test!(target, Function) {
+                function = target as Function;
+                propertymap_delete(function.properties, name);
+            } else if ref_test!(target, Promise) {
+                promise = target as Promise;
+                propertymap_delete(promise.properties, name);
+            } else if ref_test!(target, Number) {
+                // do nothing?
+            }
         }
 
         fn set_property(target: anyref, name: i32, property: Property) {
@@ -1195,9 +1311,77 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, 101 as i31ref);
         }
 
-        fn propertymap_set(map: PropertyMap, key: i32, value: Property) {
+        fn are_strings_eq(first: String, second: String) -> i32 {
+            if first.length != second.length {
+                return 0;
+            }
+
+            let length: i32 = first.length;
+            let i: i32 = 0;
+            let mut first_data: CharArray;
+            let mut second_data: CharArray;
+            while i < length {
+                first_data = first.data;
+                second_data = second.data;
+                if first_data[i] != second_data[i] {
+                    return 0;
+                }
+                i += 1;
+            }
+
+            return 1;
+        }
+
+        fn get_or_create_interned_string(interner: Interner, name: String) -> i32 {
+            let mut entries: InternedStringArray = interner.entries;
+            let capacity: i32 = len!(entries);
+            let mut entry: InternedString;
+            let new_size: i32;
+            let new_entries: InternedStringArray;
+            let length: i32 = interner.length;
+
+            let i: i32 = 0;
+            while i < length {
+                if !ref_test!(entries[i], null) {
+                    entry = entries[i] as InternedString;
+                    if are_strings_eq(entry.value, name) {
+                        return entry.offset;
+                    }
+                }
+                i += 1;
+            }
+
+            // we haven't found the string we were looking for, so let's add it
+            if interner.length >= capacity {
+                // there is still capacity
+                new_size  = capacity * 2;
+                new_entries = [null; new_size];
+
+                // Copy old entries to new array
+                i = 0;
+                while i < length {
+                    new_entries[i] = entries[i];
+                    i += 1;
+                }
+
+                interner.entries = new_entries;
+                entries = new_entries;
+            }
+
+            interner.current_offset = interner.current_offset - 1;
+            entries[interner.length] = InternedString {
+                value: name,
+                offset: interner.current_offset
+            };
+            interner.length = interner.length + 1;
+
+            return interner.current_offset;
+        }
+
+        fn propertymap_set(map: PropertyMap, key_param: i32, value: Property) {
+            let mut key: i32 = key_param;
             let mut entries: PropertyEntriesArray = map.entries;
-            let new_entry: PropertyMapEntry = PropertyMapEntry { key: key, value: value };
+            let new_entry: PropertyMapEntry;
             let mut found: i32 = 0;
             let mut i: i32 = 0;
             let new_size: i32;
@@ -1206,6 +1390,14 @@ pub fn generate_module() -> WatModule {
             let len: i32 = len!(entries);
             let mut map_size: i32 = map.size;
 
+            if key == 0 {
+                // if key is 0, it means that we haven't found it in interned strings in memory.
+                // for now, in order to not have to rewrite a big part of the code, I decided to
+                // save the string we look up as a global
+                // TODO: remove the need for a global
+                key = get_or_create_interned_string(map.interner, current_string_lookup as String);
+            }
+            new_entry = PropertyMapEntry { key: key, value: value };
             // First, search for existing key
             while i < map_size {
                 if ref_test!(entries[i], PropertyMapEntry) {
@@ -1243,9 +1435,42 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        fn get_interned_string(interner: Interner, name: String) -> i32 {
+            let mut entries: InternedStringArray = interner.entries;
+            let length: i32 = interner.length;
+            let mut entry: InternedString;
+
+            let i: i32 = 0;
+            while i < length {
+                if !ref_test!(entries[i], null) {
+                    // not sure why we would ahve a null here
+                    entry = entries[i] as InternedString;
+                    if are_strings_eq(entry.value, name) {
+                        return entry.offset;
+                    }
+
+                }
+                i += 1;
+            }
+
+            return 0;
+        }
+
         fn propertymap_get(map: PropertyMap, key: i32) -> Nullable<Property> {
             let entries: PropertyEntriesArray = map.entries;
             let mut i: i32 = 0;
+
+            if key == 0 {
+                // if key is 0, it means that we haven't found it in interned strings in memory.
+                // for now, in order to not have to rewrite a big part of the code, I decided to
+                // save the string we look up as a global
+                // TODO: remove the need for a global
+                key = get_interned_string(map.interner, current_string_lookup as String);
+                // there is no such interned string, return null
+                if key == 0 {
+                    return null as Nullable<Property>;
+                }
+            }
 
             while i < map.size {
                 if entries[i].key == key {
@@ -1255,6 +1480,25 @@ pub fn generate_module() -> WatModule {
             }
 
             return null as Nullable<Property>;
+        }
+
+        fn propertymap_delete(map: PropertyMap, key: i32) {
+            let entries: PropertyEntriesArray = map.entries;
+            let mut i: i32 = 0;
+
+            while i < map.size {
+                if entries[i].key == key {
+                    entries[i] = null;
+                    // shift all the elements and reduce size
+                    i += 1;
+                    while i < map.size {
+                        entries[i - 1] = entries[i];
+                    }
+                    map.size = map.size - 1;
+                    return;
+                }
+                i += 1;
+            }
         }
 
         fn variablemap_get(map: VariableMap, key: i32) -> Nullable<Variable> {

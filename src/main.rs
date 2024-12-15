@@ -1130,17 +1130,17 @@ impl WasmTranslator {
         };
         let mut target = self.translate_identifier(identifier);
         let offset = self.add_identifier(identifier);
-        let mut set_variable = vec![
+        let mut assign_variable = vec![
             W::local_get("$scope".to_string()),
             W::i32_const(offset),
             W::local_get(&var),
-            W::call("$set_variable"),
+            W::call("$assign_variable"),
         ];
 
         let mut result = vec![];
         result.append(&mut target);
         result.append(&mut vec![instruction, W::local_set(&var)]);
-        result.append(&mut set_variable);
+        result.append(&mut assign_variable);
         result
     }
 
@@ -1191,7 +1191,7 @@ impl WasmTranslator {
                             W::local_get("$scope".to_string()),
                             W::i32_const(offset),
                             W::local_get(&rhs_var),
-                            W::call("$set_variable"),
+                            W::call("$assign_variable"),
                         ]);
                         result
                     }
@@ -1265,19 +1265,50 @@ impl WasmTranslator {
                 None,
             );
             vec![instr, W::local_get(&result_local)]
+        } else if let UnaryOp::Delete = unary.op() {
+            let mut instructions = self.translate_expression(unary.target(), true);
+            match instructions.last() {
+                Some(W::Call(name)) if name == "$get_property_value" => {
+                    // I don't particularly like this, as this will fail as soon as we change the
+                    // code generating these instructions to emit something different, but it
+                    // should work for now
+                    instructions.pop();
+                    instructions.pop();
+                    match instructions.last() {
+                        Some(W::Call(name)) if name == "$get_property_str" => {
+                            instructions.pop();
+                            instructions.push(W::call("$delete_property_str"));
+                        }
+                        Some(W::Call(name)) if name == "$get_property" => {
+                            instructions.pop();
+                            instructions.push(W::call("$delete_property"));
+                        }
+                        _ => {
+                            panic!("Couldn't find a property instruction for delete property. This is a bug in JAWSM, please report it")
+                        }
+                    }
+                }
+                _ => {
+                    // JavaScript let's you use any expression with delete, but if
+                    // it's not property access it just does nothing ¯\_(ツ)_/¯
+                    // so we evaluate, but drop the value
+                    instructions.push(W::Drop);
+                }
+            }
+            instructions
         } else {
-            let mut target = self.translate_expression(unary.target(), true);
+            let mut instructions = self.translate_expression(unary.target(), true);
             match unary.op() {
-                UnaryOp::Minus => target.push(W::call("$op_minus")),
+                UnaryOp::Minus => instructions.push(W::call("$op_minus")),
                 UnaryOp::Plus => todo!(),
-                UnaryOp::Not => target.push(W::call("$logical_not")),
+                UnaryOp::Not => instructions.push(W::call("$logical_not")),
                 UnaryOp::Tilde => todo!(),
                 UnaryOp::TypeOf => unreachable!(),
-                UnaryOp::Delete => todo!(),
+                UnaryOp::Delete => unreachable!(),
                 UnaryOp::Void => todo!(),
             }
 
-            target
+            instructions
         }
     }
 
