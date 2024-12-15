@@ -715,6 +715,33 @@ pub fn generate_module() -> WatModule {
             };
         }
 
+        fn add_string_to_static_string(static_string: StaticString, str: String) -> String {
+            let str_len: i32 = str.length;
+            let string_data: CharArray = str.data;
+            let static_string_length: i32 = static_string.length;
+            let static_string_offset: i32 = static_string.offset;
+            let total_length: i32 = str_len + static_string_length;
+            let new_string_data: CharArray = [0; total_length];
+
+            // TODO: replace with array.copy when implemented
+            let mut i: i32 = 0;
+            while i < static_string_length {
+                new_string_data[i] = memory::<i8>[static_string_offset + i];
+                i += 1;
+            }
+
+            i = 0;
+            while i < str_len {
+                new_string_data[i + static_string_length] = string_data[i];
+                i += 1;
+            }
+
+            return String {
+                data: new_string_data,
+                length: total_length
+            };
+        }
+
         fn create_propertymap() -> PropertyMap {
             return PropertyMap {
                 entries: [null; 10],
@@ -973,7 +1000,7 @@ pub fn generate_module() -> WatModule {
                     if ref_test!(current_scope, null) {
                         // TODO: this should throw reference error, but we have to implement it in
                         // here, not in JS
-                        throw!(JSException, 999999999 as i31ref);
+                        throw!(JSException, offset_to_string(name));
                     }
                 } else {
                     return value;
@@ -1024,7 +1051,7 @@ pub fn generate_module() -> WatModule {
             if ref_test!(name, String) {
                 offset = get_data_offset_str((name as String).data);
             } else if ref_test!(name, StaticString) {
-                // TODO: implement
+                offset = get_data_offset_static_str(name as StaticString);
             } else {
                 // should we try to convert to string again?
                 // TODO: implement
@@ -2081,6 +2108,44 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, 2222222 as i31ref);
         }
 
+        fn offset_to_string(target_offset: i32) -> Nullable<String> {
+            let mut offset: i32 = data_offsets_offset;
+            let mut current_offset: i32;
+            let mut current_length: i32;
+            let length: i32 = memory[offset];
+            let mut i: i32 = 0;
+            let mut j: i32;
+            let result: String;
+            let data: CharArray;
+
+            offset += 4;
+
+            while i < length {
+                current_offset = memory[offset];
+                current_length = memory[offset + 4];
+
+                if current_offset == target_offset {
+                    data = [0; current_length];
+                    j = 0;
+                    while j < current_length {
+                        data[j] = memory::<i8>[current_offset + j];
+                        j+=1;
+                    }
+
+                    return String {
+                        data: data,
+                        length: current_length
+                    };
+
+                }
+
+                offset += 8;
+                i += 1;
+            }
+
+            return null as Nullable<String>;
+        }
+
         fn get_data_offset_static_str(str: StaticString) -> i32 {
             let mut offset: i32 = data_offsets_offset;
             let str_offset: i32 = str.offset;
@@ -2122,8 +2187,6 @@ pub fn generate_module() -> WatModule {
             // we can return 0 as we don't store anything at offset 0
             return 0;
         }
-
-
 
         fn get_data_offset_str(str: CharArray) -> i32 {
             let mut offset: i32 = data_offsets_offset;

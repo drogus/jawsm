@@ -995,7 +995,16 @@ impl WasmTranslator {
                         ]);
                         result
                     }
-                    PropertyName::Computed(_) => todo!(),
+                    PropertyName::Computed(computed) => {
+                        let mut name_instructions = self.translate_expression(computed, true);
+                        let mut assign_instructions = self.translate_expression(expression, true);
+                        let mut instructions = vec![];
+                        instructions.push(W::local_get(&new_instance));
+                        instructions.append(&mut name_instructions);
+                        instructions.append(&mut assign_instructions);
+                        instructions.push(W::call("$set_property_value_str"));
+                        instructions
+                    }
                 },
                 PropertyDefinition::MethodDefinition(property_name, method_definition) => {
                     match property_name {
