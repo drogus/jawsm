@@ -25,6 +25,27 @@ pub fn generate_module() -> WatModule {
         tag!(InternalException, InternalExceptionType);
         tag!(JSException, JSExceptionType);
 
+        static PROPERTY_WRITABLE: i32     = 0b00000001;
+        static PROPERTY_ENUMERABLE: i32   = 0b00000010;
+        static PROPERTY_CONFIGURABLE: i32 = 0b00000100;
+        static PROPERTY_IS_GETTER: i32    = 0b00001000;
+        static PROPERTY_IS_SETTER: i32    = 0b00010000;
+
+        struct Property {
+            value: anyref,
+            flags: i32
+        }
+
+        struct PropertyMapEntry {
+            key: mut i32,
+            value: mut Property
+        }
+        type PropertyEntriesArray = [mut Nullable<PropertyMapEntry>];
+        struct PropertyMap {
+            entries: mut PropertyEntriesArray,
+            size: mut i32
+        }
+
         // Basic types for strings
         type CharArray = [mut i8];
 
@@ -84,13 +105,13 @@ pub fn generate_module() -> WatModule {
             scope: mut Scope,
             func: mut JSFunc,
             this: mut anyref,
-            properties: mut HashMap,
+            properties: mut PropertyMap,
             own_prototype: mut anyref,
         }
 
         // Object types
         struct Object {
-            properties: mut HashMap,
+            properties: mut PropertyMap,
             own_prototype: mut anyref,
             // interned: InternMap,
         }
@@ -118,7 +139,7 @@ pub fn generate_module() -> WatModule {
         rec! {
             type PromisesArray = [mut Nullable<Promise>];
             struct Promise {
-                properties: mut HashMap,
+                properties: mut PropertyMap,
                 success_result: mut anyref,
                 error_result: mut anyref,
                 then_callback: mut Nullable<Function>,
@@ -162,7 +183,7 @@ pub fn generate_module() -> WatModule {
 
         fn create_new_promise() -> Promise {
             return Promise {
-                properties: new_hashmap(),
+                properties: create_propertymap(),
                 success_result: null,
                 error_result: null,
                 then_callback: null,
@@ -179,19 +200,19 @@ pub fn generate_module() -> WatModule {
             let object: Object = new_object();
 
             set_property(object, data!("then"),
-                new_function(global_scope as Scope, Promise_then, null));
+                create_property_function(global_scope as Scope, Promise_then, null));
 
             set_property(object, data!("catch"),
-                new_function(global_scope as Scope, Promise_catch, null));
+                create_property_function(global_scope as Scope, Promise_catch, null));
 
             set_property(object, data!("finally"),
-                new_function(global_scope as Scope, Promise_finally, null));
+                create_property_function(global_scope as Scope, Promise_finally, null));
 
             set_property(object, data!("toString"),
-                new_function(global_scope as Scope, Promise_toString, null));
+                create_property_function(global_scope as Scope, Promise_toString, null));
 
             set_property(object, data!("constructor"),
-                new_function(global_scope as Scope, Promise_constructor, null));
+                create_property_function(global_scope as Scope, Promise_constructor, null));
 
             return object;
         }
@@ -224,10 +245,10 @@ pub fn generate_module() -> WatModule {
             let object: Object = new_object();
 
             set_property(object, data!("toString"),
-                new_function(global_scope as Scope, Object_toString, null));
+                create_property_function(global_scope as Scope, Object_toString, null));
 
             set_property(object, data!("constructor"),
-                new_function(global_scope as Scope, Object_constructor, null));
+                create_property_function(global_scope as Scope, Object_constructor, null));
 
             object.own_prototype = null;
             return object;
@@ -235,7 +256,7 @@ pub fn generate_module() -> WatModule {
 
         fn setup_object_constructor(constructor: Function) {
             set_property(constructor, data!("create"),
-                new_function(global_scope as Scope, Object_create, null));
+                create_property_function(global_scope as Scope, Object_create, null));
         }
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -257,10 +278,10 @@ pub fn generate_module() -> WatModule {
             let object: Object = new_object();
 
             set_property(object, data!("toString"),
-                new_function(global_scope as Scope, Function_toString, null));
+                create_property_function(global_scope as Scope, Function_toString, null));
 
             set_property(object, data!("call"),
-                new_function(global_scope as Scope, Function_call, null));
+                create_property_function(global_scope as Scope, Function_call, null));
 
             return object;
         }
@@ -296,7 +317,7 @@ pub fn generate_module() -> WatModule {
             let object: Object = new_object();
 
             set_property(object, data!("toString"),
-                new_function(global_scope as Scope, Number_toString, null));
+                create_property_function(global_scope as Scope, Number_toString, null));
 
             return object;
         }
@@ -630,11 +651,11 @@ pub fn generate_module() -> WatModule {
             if ref_test!(result, Object) {
                 object = result as Object;
                 object.own_prototype = prototype;
-                set_property(object, data!("constructor"), constructor);
+                set_property(object, data!("constructor"), create_property(constructor));
             } else if ref_test!(result, Promise) {
                 promise = result as Promise;
                 promise.own_prototype = prototype;
-                set_property(promise, data!("constructor"), constructor);
+                set_property(promise, data!("constructor"), create_property(constructor));
             }
 
             return result;
@@ -689,6 +710,24 @@ pub fn generate_module() -> WatModule {
             };
         }
 
+        fn create_propertymap() -> PropertyMap {
+            return PropertyMap {
+                entries: [null; 10],
+                size: 0
+            };
+        }
+
+        fn create_property(value: anyref) -> Property {
+            return Property {
+                value: value,
+                flags: PROPERTY_WRITABLE
+            };
+        }
+
+        fn create_property_function(scope: Scope, function: JSFunc, this: anyref) -> Property {
+            return create_property(new_function(scope, function, this));
+        }
+
         fn new_hashmap() -> HashMap {
             return HashMap {
                 entries: [null; 10],
@@ -705,7 +744,7 @@ pub fn generate_module() -> WatModule {
 
         fn new_object() -> Object {
             return Object {
-                properties: new_hashmap(),
+                properties: create_propertymap(),
                 own_prototype: global_object_prototype,
                 // interned: create_intern_map(),
             };
@@ -729,12 +768,12 @@ pub fn generate_module() -> WatModule {
                 scope: scope,
                 func: function,
                 this: this,
-                properties: new_hashmap(),
+                properties: create_propertymap(),
                 own_prototype: global_function_prototype
             };
 
             // TODO: this should also have a constructor set
-            set_property(f, data!("prototype"), new_object());
+            set_property(f, data!("prototype"), create_property(new_object()));
 
             return f;
         }
@@ -898,9 +937,7 @@ pub fn generate_module() -> WatModule {
             if ref_test!(name, String) {
                 offset = get_data_offset_str((name as String).data);
             } else if ref_test!(name, StaticString) {
-                // TODO: implement
-                let result: i32 = -1;
-                return result as i31ref;
+                offset = get_data_offset_static_str(name as StaticString);
             } else {
                 // should we try to convert to string again?
                 // TODO: implement
@@ -916,7 +953,15 @@ pub fn generate_module() -> WatModule {
             return result as i31ref;
         }
 
-        fn set_property_str(target: anyref, name: anyref, value: anyref) {
+        fn get_property_value(property: anyref) -> anyref {
+            if ref_test!(property, Property) {
+                return (property as Property).value;
+            }
+
+            throw!(JSException, 7878787 as i31ref);
+        }
+
+        fn set_property_str(target: anyref, name: anyref, value: Property) {
             let offset: i32;
 
             if ref_test!(name, String) {
@@ -950,7 +995,7 @@ pub fn generate_module() -> WatModule {
             // to research parent and child types
             if ref_test!(target, Object) {
                 object = target as Object;
-                result = hashmap_get(object.properties, name);
+                result = propertymap_get(object.properties, name);
                 if ref_test!(result, i31ref) {
                     if !ref_test!(result, null) {
                         if (result as i31ref) == -1 {
@@ -964,7 +1009,7 @@ pub fn generate_module() -> WatModule {
                 }
             } else if ref_test!(target, Function) {
                 function = target as Function;
-                result = hashmap_get(function.properties, name);
+                result = propertymap_get(function.properties, name);
                 if ref_test!(result, i31ref) {
                     if !ref_test!(result, null) {
                         if (result as i31ref) == -1 {
@@ -978,7 +1023,7 @@ pub fn generate_module() -> WatModule {
                 }
             } else if ref_test!(target, Promise) {
                 promise = target as Promise;
-                result = hashmap_get(promise.properties, name);
+                result = propertymap_get(promise.properties, name);
                 if ref_test!(result, i31ref) {
                     if !ref_test!(result, null) {
                         if (result as i31ref) == -1 {
@@ -1012,23 +1057,71 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
-        fn set_property(target: anyref, name: i32, value: anyref) {
+        fn set_property(target: anyref, name: i32, value: Property) {
             if ref_test!(target, Object) {
-                hashmap_set((target as Object).properties, name, value);
+                propertymap_set((target as Object).properties, name, value);
                 return;
             }
 
             if ref_test!(target, Function) {
-                hashmap_set((target as Function).properties, name, value);
+                propertymap_set((target as Function).properties, name, value);
                 return;
             }
 
             if ref_test!(target, Promise) {
-                hashmap_set((target as Promise).properties, name, value);
+                propertymap_set((target as Promise).properties, name, value);
                 return;
             }
 
             throw!(JSException, 101 as i31ref);
+        }
+
+        fn propertymap_set(map: PropertyMap, key: i32, value: Property) {
+            let mut entries: PropertyEntriesArray = map.entries;
+            let new_entry: PropertyMapEntry = PropertyMapEntry { key: key, value: value };
+            let mut found: i32 = 0;
+            let mut i: i32 = 0;
+            let new_size: i32;
+            let mut new_entries: PropertyEntriesArray;
+            let mut entry: PropertyMapEntry;
+            let len: i32 = len!(entries);
+            let mut map_size: i32 = map.size;
+
+            // First, search for existing key
+            while i < map_size {
+                if ref_test!(entries[i], PropertyMapEntry) {
+                    entry = entries[i] as PropertyMapEntry;
+                    if entry.key == key {
+                        entry.value = value;
+                        found = 1;
+                        return;
+                    }
+                }
+                i += 1;
+            }
+
+            // If key wasn't found, proceed with insertion
+            if found == 0 {
+                // Check if we need to resize
+                if map_size >= len {
+                    new_size  = len * 2;
+                    new_entries = [null; new_size];
+
+                    // Copy old entries to new array
+                    i = 0;
+                    while i < len {
+                        new_entries[i] = entries[i];
+                        i += 1;
+                    }
+
+                    map.entries = new_entries;
+                    entries = new_entries;
+                }
+
+                // Add new entry and increment size
+                entries[map.size] = new_entry;
+                map.size = map.size + 1;
+            }
         }
 
         fn hashmap_set(map: HashMap, key: i32, value: anyref) {
@@ -1120,6 +1213,30 @@ pub fn generate_module() -> WatModule {
                 entries[map.size] = new_entry;
                 map.size = map.size + 1;
             }
+        }
+
+        fn propertymap_get(map: PropertyMap, key: i32) -> anyref {
+            let entries: PropertyEntriesArray = map.entries;
+            let mut i: i32 = 0;
+
+            while i < map.size {
+                if entries[i].key == key {
+                    return entries[i].value;
+                }
+                i += 1;
+            }
+
+            // we need to somehow differentiate between value not being found and the found
+            // value being null
+            // TODO: it would be much easier to check the result on the call site if we
+            // returned a pair of values - i32 and anyref, where i32 is for checking if
+            // the value was found. Tarnik doesn't support multiple return values, so it would
+            // be nice to fix it
+            // TODO: trying to return -1 as i31ref fails, cause tarnik first tries to get
+            // i31.get_s and only then negate. It should be fixed
+            let res_i32: i32 = -1;
+            let res: i31ref = res_i32 as i31ref;
+            return res;
         }
 
         fn hashmap_get(map: HashMap, key: i32) -> anyref {
@@ -1903,6 +2020,50 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, 2222222 as i31ref);
         }
 
+        fn get_data_offset_static_str(str: StaticString) -> i32 {
+            let mut offset: i32 = data_offsets_offset;
+            let str_offset: i32 = str.offset;
+            let str_length: i32 = str.length;
+            let mut current_offset: i32;
+            let mut current_length: i32;
+            let length: i32 = memory[offset];
+            let mut i: i32 = 0;
+            let mut j: i32;
+            let mut found: i32 = 0;
+
+            offset += 4;
+
+            while i < length {
+                current_offset = memory[offset];
+                current_length = memory[offset + 4];
+
+                if str_length == current_length {
+                    j = 0;
+                    found = 1;
+                    while j < str_length {
+                        if memory::<i8>[str_offset + j] != memory::<i8>[current_offset + j] {
+                            found = 0;
+                            j = str_length; // poor man's break
+                        }
+
+                        j += 1;
+                    }
+
+                    if found {
+                        return str_offset;
+                    }
+                }
+
+                i += 1;
+                offset += 8;
+            }
+
+            // we can return 0 as we don't store anything at offset 0
+            return 0;
+        }
+
+
+
         fn get_data_offset_str(str: CharArray) -> i32 {
             let mut offset: i32 = data_offsets_offset;
             let length: i32 = memory[offset];
@@ -1984,8 +2145,8 @@ pub fn generate_module() -> WatModule {
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
 
-            set_property(promise_constructor, data!("prototype"), promise_prototype);
-            set_property(object_constructor, data!("prototype"), global_object_prototype);
+            set_property(promise_constructor, data!("prototype"), create_property(promise_prototype));
+            set_property(object_constructor, data!("prototype"), create_property(global_object_prototype));
 
             set_variable(global_scope as Scope, data!("Promise"), promise_constructor);
             set_variable(global_scope as Scope, data!("Object"), object_constructor);

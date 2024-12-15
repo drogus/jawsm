@@ -531,12 +531,16 @@ impl WasmTranslator {
                             result.append(&mut vec![
                                 W::i32_const(offset),
                                 W::local_get(&temp),
+                                W::call("$create_property"),
                                 W::call("$set_property"),
                             ]);
                             result
                         } else {
-                            target
-                                .append(&mut vec![W::i32_const(offset), W::call("$get_property")]);
+                            target.append(&mut vec![
+                                W::i32_const(offset),
+                                W::call("$get_property"),
+                                W::call("$get_property_value"),
+                            ]);
                             target
                         }
                     }
@@ -554,11 +558,15 @@ impl WasmTranslator {
                             result.append(&mut target);
                             result.append(&mut instructions);
                             result.append(&mut assign_instructions);
-                            result.append(&mut vec![W::call("$set_property_str")]);
+                            result.append(&mut vec![
+                                W::call("$create_property"),
+                                W::call("$set_property_str"),
+                            ]);
                             result
                         } else {
                             target.append(&mut instructions);
                             target.push(W::call("$get_property_str"));
+                            target.push(W::call("$get_property_value"));
                             target
                         }
 
@@ -968,6 +976,7 @@ impl WasmTranslator {
                         W::local_get(&new_instance),
                         W::i32_const(offset),
                         W::local_get(&temp),
+                        W::call("$create_property"),
                         W::call("$set_property"),
                     ]);
                     result
@@ -981,6 +990,7 @@ impl WasmTranslator {
                             W::local_get(&new_instance),
                             W::i32_const(offset),
                             W::local_get(&temp),
+                            W::call("$create_property"),
                             W::call("$set_property"),
                         ]);
                         result
@@ -1007,6 +1017,7 @@ impl WasmTranslator {
                                 W::local_get(&new_instance),
                                 W::i32_const(offset),
                                 W::local_get(&temp),
+                                W::call("$create_property"),
                                 W::call("$set_property"),
                             ]);
                             result
@@ -1046,6 +1057,7 @@ impl WasmTranslator {
             W::local_tee(&constructor),
             W::I32Const(self.insert_data_string("prototype").0),
             W::call("$get_property"),
+            W::call("$get_property_value"),
             W::local_set(&prototype_local),
         ];
         result.append(&mut self.translate_call(
@@ -1646,9 +1658,10 @@ fn main() -> anyhow::Result<()> {
         },
     );
 
+    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
+
     let binary = wat::parse_str(module.to_string())?;
 
-    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
     match output_path {
         Some(path) => {
             std::fs::write(path, &binary)?;
