@@ -59,23 +59,23 @@ pub fn generate_module() -> WatModule {
             length: i32
         }
 
-        // HashMap types
-        struct HashMapEntryI32 {
-            key: mut i32,
-            value: mut i32
-        }
-        type EntriesArrayI32 = [mut Nullable<HashMapEntryI32>];
-        struct HashMapI32 {
-            entries: mut EntriesArrayI32,
-            size: mut i32
+        static VARIABLE_CONST: i32     = 0b00000001;
+        static VARIABLE_LET: i32       = 0b00000010;
+        static VARIABLE_VAR: i32       = 0b00000100;
+        static VARIABLE_PARAM: i32     = 0b00001000;
+
+        struct Variable {
+            value: mut anyref,
+            flags: i32,
         }
 
-        struct HashMapEntry {
+        // VariableMap types
+        struct VariableMapEntry {
             key: mut i32,
-            value: mut anyref
+            value: mut Variable
         }
-        type EntriesArray = [mut Nullable<HashMapEntry>];
-        struct HashMap {
+        type EntriesArray = [mut Nullable<VariableMapEntry>];
+        struct VariableMap {
             entries: mut EntriesArray,
             size: mut i32
         }
@@ -83,8 +83,7 @@ pub fn generate_module() -> WatModule {
         // Scope and variable management
         struct Scope {
             parent: mut Nullable<Scope>,
-            variables: mut HashMap,
-            var_types: mut HashMapI32
+            variables: mut VariableMap,
         }
 
         // Function types
@@ -806,15 +805,8 @@ pub fn generate_module() -> WatModule {
             return create_property(new_function(scope, function, this));
         }
 
-        fn new_hashmap() -> HashMap {
-            return HashMap {
-                entries: [null; 10],
-                size: 0
-            };
-        }
-
-        fn new_hashmap_i32() -> HashMapI32 {
-            return HashMapI32 {
+        fn new_variablemap() -> VariableMap {
+            return VariableMap {
                 entries: [null; 10],
                 size: 0
             };
@@ -905,80 +897,109 @@ pub fn generate_module() -> WatModule {
         fn new_scope(parent: Nullable<Scope>) -> Scope {
             return Scope {
                 parent: parent,
-                variables: new_hashmap(),
-                var_types: new_hashmap_i32()
+                variables: new_variablemap(),
             };
         }
 
         fn assign_variable(scope: Scope, name: i32, value: anyref) {
             let mut current_scope: Nullable<Scope> = scope;
-            let found_value: anyref;
-            let mut run: i32 = 1;
+            let maybe_var: Nullable<Variable>;
 
-            while run {
-                found_value = hashmap_get(current_scope.variables, name);
-                if is_no_value_found(found_value) {
+            while !ref_test!(current_scope, null) {
+                maybe_var = variablemap_get(current_scope.variables, name);
+                if ref_test!(maybe_var, null) {
                     current_scope = current_scope.parent;
-                    if ref_test!(current_scope, null) {
-                        throw!(JSException, name as i31ref);
-                    }
                 } else {
-                    set_variable(current_scope as Scope, name, value);
-                    run = 0;
+                    let var: Variable = maybe_var as Variable;
+                    if var.flags & VARIABLE_CONST != 0 {
+                        throw!(JSException, 13 as i31ref);
+                    }
+
+                    var.value = value;
+                    return;
                 }
             }
 
             // TODO: if there's no variable found JS still lets you assign, but
             // it saves it on the global scope
-            set_variable(global_scope as Scope, name, value);
+            declare_variable(global_scope as Scope, name, value, VARIABLE_VAR);
         }
 
-        fn set_variable(scope: Scope, name: i32, value: anyref) {
-            let existing_type: i32 = hashmap_get_i32(scope.var_types, name);
+        fn declare_variable(scope: Scope, name: i32, value: anyref, var_flag: i32) {
+            let existing: Nullable<Variable> = variablemap_get(scope.variables, name);
+            let var: Variable;
 
-            if existing_type == 0 {
-                // 0 means const, throw error
-                throw!(JSException, 12 as i31ref);
-            }
+            if ref_test!(existing, null) {
+                var = Variable {
+                    value: value,
+                    flags: var_flag,
+                };
 
-            hashmap_set(scope.variables, name, value);
-        }
+                variablemap_set(scope.variables, name, var);
+            } else {
+                var = existing as Variable;
 
-        fn declare_variable(scope: Scope, name: i32, value: anyref, var_type: i32) {
-            let existing_type: i32 = hashmap_get_i32(scope.var_types, name);
-
-            if existing_type == 3 || existing_type == -1 || existing_type == 2 {
-                // -1: no var in hashmap, can declare
-                // 2: var and 3: param, can overwrite
-                hashmap_set(scope.variables, name, value);
-                hashmap_set_i32(scope.var_types, name, var_type);
-                return;
-            }
-
-            if existing_type == 0 {
-                // const declaration, throw error
-                throw!(JSException, 10 as i31ref);
-            }
-
-            if existing_type == 1 {
-                // let declaration, throw error
-                throw!(JSException, 11 as i31ref);
-            }
-        }
-
-        fn is_no_value_found(arg: anyref) -> i32 {
-            if ref_test!(arg, null) {
-                return 0;
-            }
-
-            if ref_test!(arg, i31ref) {
-                if (arg as i31ref) == -1 {
-                    return 1;
+                if var.flags & VARIABLE_PARAM != 0 || var.flags & VARIABLE_VAR != 0 {
+                    var.value = value;
+                } else if var.flags & VARIABLE_CONST != 0 {
+                    // const declaration, throw error
+                    throw!(JSException, 10 as i31ref);
+                } else if var.flags & VARIABLE_LET {
+                    // let declaration, throw error
+                    throw!(JSException, 11 as i31ref);
                 }
             }
-
-            return 0;
         }
+
+        fn variablemap_set(map: VariableMap, key: i32, value: Variable) {
+            let mut entries: EntriesArray = map.entries;
+            let new_entry: VariableMapEntry = VariableMapEntry { key: key, value: value };
+            let mut found: i32 = 0;
+            let mut i: i32 = 0;
+            let new_size: i32;
+            let mut new_entries: EntriesArray;
+            let mut entry: VariableMapEntry;
+            let len: i32 = len!(entries);
+            let mut map_size: i32 = map.size;
+
+            // First, search for existing key
+            while i < map_size {
+                if ref_test!(entries[i], VariableMapEntry) {
+                    entry = entries[i] as VariableMapEntry;
+                    if entry.key == key {
+                        entry.value = value;
+                        found = 1;
+                        return;
+                    }
+                }
+                i += 1;
+            }
+
+            // If key wasn't found, proceed with insertion
+            if found == 0 {
+                // Check if we need to resize
+                if map_size >= len {
+                    new_size  = len * 2;
+                    new_entries = [null; new_size];
+
+                    // Copy old entries to new array
+                    i = 0;
+                    while i < len {
+                        new_entries[i] = entries[i];
+                        i += 1;
+                    }
+
+                    map.entries = new_entries;
+                    entries = new_entries;
+                }
+
+                // Add new entry and increment size
+                entries[map.size] = new_entry;
+                map.size = map.size + 1;
+            }
+        }
+
+
 
         fn create_reference_error(name: i32) -> anyref {
             let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
@@ -991,11 +1012,11 @@ pub fn generate_module() -> WatModule {
 
         fn get_variable(scope: Scope, name: i32) -> anyref {
             let mut current_scope: Nullable<Scope> = scope;
-            let value: anyref;
+            let var: Nullable<Variable>;
 
             while 1 {
-                value = hashmap_get(current_scope.variables, name);
-                if is_no_value_found(value) {
+                var = variablemap_get(current_scope.variables, name);
+                if ref_test!(var, null) {
                     current_scope = current_scope.parent;
                     if ref_test!(current_scope, null) {
                         // TODO: this should throw reference error, but we have to implement it in
@@ -1003,7 +1024,7 @@ pub fn generate_module() -> WatModule {
                         throw!(JSException, offset_to_string(name));
                     }
                 } else {
-                    return value;
+                    return (var as Variable).value;
                 }
             }
             throw!(JSException, 103 as i31ref);
@@ -1222,97 +1243,6 @@ pub fn generate_module() -> WatModule {
             }
         }
 
-        fn hashmap_set(map: HashMap, key: i32, value: anyref) {
-            let mut entries: EntriesArray = map.entries;
-            let new_entry: HashMapEntry = HashMapEntry { key: key, value: value };
-            let mut found: i32 = 0;
-            let mut i: i32 = 0;
-            let new_size: i32;
-            let mut new_entries: EntriesArray;
-            let mut entry: HashMapEntry;
-            let len: i32 = len!(entries);
-            let mut map_size: i32 = map.size;
-
-            // First, search for existing key
-            while i < map_size {
-                if ref_test!(entries[i], HashMapEntry) {
-                    entry = entries[i] as HashMapEntry;
-                    if entry.key == key {
-                        entry.value = value;
-                        found = 1;
-                        return;
-                    }
-                }
-                i += 1;
-            }
-
-            // If key wasn't found, proceed with insertion
-            if found == 0 {
-                // Check if we need to resize
-                if map_size >= len {
-                    new_size  = len * 2;
-                    new_entries = [null; new_size];
-
-                    // Copy old entries to new array
-                    i = 0;
-                    while i < len {
-                        new_entries[i] = entries[i];
-                        i += 1;
-                    }
-
-                    map.entries = new_entries;
-                    entries = new_entries;
-                }
-
-                // Add new entry and increment size
-                entries[map.size] = new_entry;
-                map.size = map.size + 1;
-            }
-        }
-
-        fn hashmap_set_i32(map: HashMapI32, key: i32, value: i32) {
-            let mut entries: EntriesArrayI32 = map.entries;
-            let new_entry: HashMapEntryI32 = HashMapEntryI32 { key: key, value: value };
-            let mut found: i32 = 0;
-            let mut i: i32 = 0;
-            let new_size: i32;
-            let mut new_entries: EntriesArrayI32;
-            let len: i32 = len!(entries);
-
-            // First, search for existing key
-            while i < map.size {
-                if entries[i].key == key {
-                    entries[i] = new_entry;
-                    found = 1;
-                    return;
-                }
-                i += 1;
-            }
-
-            // If key wasn't found, proceed with insertion
-            if found == 0 {
-                // Check if we need to resize
-                if map.size >= len!(entries) {
-                    new_size = len!(entries) * 2;
-                    new_entries = [null; new_size];
-
-                    // Copy old entries to new array
-                    i = 0;
-                    while i < len!(entries) {
-                        new_entries[i] = entries[i];
-                        i += 1;
-                    }
-
-                    map.entries = new_entries;
-                    entries = new_entries;
-                }
-
-                // Add new entry and increment size
-                entries[map.size] = new_entry;
-                map.size = map.size + 1;
-            }
-        }
-
         fn propertymap_get(map: PropertyMap, key: i32) -> Nullable<Property> {
             let entries: PropertyEntriesArray = map.entries;
             let mut i: i32 = 0;
@@ -1327,7 +1257,7 @@ pub fn generate_module() -> WatModule {
             return null as Nullable<Property>;
         }
 
-        fn hashmap_get(map: HashMap, key: i32) -> anyref {
+        fn variablemap_get(map: VariableMap, key: i32) -> Nullable<Variable> {
             let entries: EntriesArray = map.entries;
             let mut i: i32 = 0;
 
@@ -1338,36 +1268,7 @@ pub fn generate_module() -> WatModule {
                 i += 1;
             }
 
-            // we need to somehow differentiate between value not being found and the found
-            // value being null
-            // TODO: it would be much easier to check the result on the call site if we
-            // returned a pair of values - i32 and anyref, where i32 is for checking if
-            // the value was found. Tarnik doesn't support multiple return values, so it would
-            // be nice to fix it
-            // TODO: trying to return -1 as i31ref fails, cause tarnik first tries to get
-            // i31.get_s and only then negate. It should be fixed
-            let res_i32: i32 = -1;
-            let res: i31ref = res_i32 as i31ref;
-            return res;
-        }
-
-        fn hashmap_get_i32(map: HashMapI32, key: i32) -> i32 {
-            let entries: EntriesArrayI32 = map.entries;
-            let mut i: i32 = 0;
-
-            while i < map.size {
-                if entries[i].key == key {
-                    return entries[i].value;
-                }
-                i += 1;
-            }
-
-            // not sure if there is a better way to handle this, but since the result is i32,
-            // we have to return something on not found key
-            // if it was used for anything else than values greater than zero, we should probably
-            // make a function like hashmap_exists_i32 and then if a key exists, assume hashmap_get returns
-            // a proper key
-            return -1;
+            return null;
         }
 
         fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
@@ -2272,8 +2173,8 @@ pub fn generate_module() -> WatModule {
             set_property(promise_constructor, data!("prototype"), create_property(promise_prototype));
             set_property(object_constructor, data!("prototype"), create_property(global_object_prototype));
 
-            set_variable(global_scope as Scope, data!("Promise"), promise_constructor);
-            set_variable(global_scope as Scope, data!("Object"), object_constructor);
+            declare_variable(global_scope as Scope, data!("Promise"), promise_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);
 
             setup_object_constructor(object_constructor);
         }

@@ -49,10 +49,10 @@ enum VarType {
 impl VarType {
     fn to_i32(&self) -> i32 {
         match self {
-            VarType::Const => 0,
-            VarType::Let => 1,
-            VarType::Var => 2,
-            VarType::Param => 3,
+            VarType::Const => 0b00000001,
+            VarType::Let => 0b00000010,
+            VarType::Var => 0b00000100,
+            VarType::Param => 0b00001000,
         }
     }
 }
