@@ -5,6 +5,10 @@ require 'pathname'
 require 'thread'
 require 'yaml'
 require 'timeout'
+require 'json'
+
+# Results file
+RESULTS_FILE = 'results.json'
 
 # Check required environment variables
 TEST262_DIR = ENV['TEST262_DIR']
@@ -58,8 +62,19 @@ def parse_test_metadata(content)
   {}
 end
 
+def save_test_result(test_path, status, details = nil)
+  result = {
+    test: test_path,
+    pass: status == :success,
+    result: status.to_s,
+    details: details
+  }
+  File.open(RESULTS_FILE, 'a') do |f|
+    f.puts(JSON.generate(result))
+  end
+end
+
 def run_test(test_path, harness_content)
-  puts "Starting #{test_path}"
   # Create temporary file with harness and test content
   test_content = File.read(test_path)
   metadata = parse_test_metadata(test_content)
@@ -88,6 +103,8 @@ def run_test(test_path, harness_content)
         # Ignore deletion errors
       end
       # Return success (0) if this was expected to fail parsing
+      status = expected_parse_error ? :success : :parse_error
+      save_test_result(test_path, status, "JAWSM parsing error")
       return [expected_parse_error ? 0 : 100, nil, output]
     end
     
@@ -99,9 +116,11 @@ def run_test(test_path, harness_content)
       rescue => e
         # Ignore deletion errors
       end
+      save_test_result(test_path, :panic, panic_location)
       return [exit_code, panic_location, output]
     end
   rescue Timeout::Error
+    save_test_result(test_path, :timeout)
     return [101, nil, ""]
   end
   
@@ -110,6 +129,14 @@ def run_test(test_path, harness_content)
   rescue => e
     # Ignore deletion errors
   end
+  status = case exit_code
+           when 0 then :success
+           when 100 then :compilation_error
+           when 101 then :runtime_error
+           else :unknown_error
+           end
+  
+  save_test_result(test_path, status)
   [exit_code, nil, output]
 end
 
@@ -155,6 +182,9 @@ end
 
 # Load excluded features
 @excluded_features = parse_features_file
+
+# Clear results file at start
+File.write(RESULTS_FILE, '')
 
 # Get test files based on command line argument or find all
 test_queue = Queue.new
