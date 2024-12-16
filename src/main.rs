@@ -57,6 +57,14 @@ impl VarType {
     }
 }
 
+fn drop_if_no_use(mut instructions: InstructionsList, will_use_return: bool) -> InstructionsList {
+    if !will_use_return {
+        instructions.push(W::Drop);
+    }
+
+    instructions
+}
+
 fn gen_function_name(s: Option<String>) -> String {
     let r: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
@@ -606,7 +614,9 @@ impl WasmTranslator {
                 }
                 instr
             }
-            Expression::Literal(literal) => self.translate_literal(literal),
+            Expression::Literal(literal) => {
+                drop_if_no_use(self.translate_literal(literal), will_use_return)
+            }
             Expression::RegExpLiteral(_reg_exp_literal) => todo!(),
             Expression::ArrayLiteral(array_literal) => {
                 self.translate_array_literal(array_literal, will_use_return)
