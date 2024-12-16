@@ -63,8 +63,10 @@ def parse_test_metadata(content)
 end
 
 def save_test_result(test_path, status, details = nil)
+  # Make path relative to TEST262_DIR
+  relative_path = Pathname.new(test_path).relative_path_from(Pathname.new(TEST262_DIR)).to_s
   result = {
-    test: test_path,
+    file: relative_path,
     pass: status == :success,
     result: status.to_s,
     details: details
