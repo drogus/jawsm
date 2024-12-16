@@ -453,13 +453,13 @@ impl WasmTranslator {
             BinaryOp::Relational(relational_op) => {
                 let func_name = match relational_op {
                     RelationalOp::Equal => "$loose_equal",
-                    RelationalOp::NotEqual => todo!(),
+                    RelationalOp::NotEqual => "$not_loose_equal",
                     RelationalOp::StrictEqual => "$strict_equal",
                     RelationalOp::StrictNotEqual => "$strict_not_equal",
-                    RelationalOp::GreaterThan => todo!(),
+                    RelationalOp::GreaterThan => "$greater_than",
                     RelationalOp::GreaterThanOrEqual => "$greater_than_or_equal",
                     RelationalOp::LessThan => "$less_than",
-                    RelationalOp::LessThanOrEqual => todo!(),
+                    RelationalOp::LessThanOrEqual => "$less_than_or_equal",
                     RelationalOp::In => todo!(),
                     RelationalOp::InstanceOf => "$instance_of",
                 };
@@ -1393,6 +1393,10 @@ impl WasmTranslator {
         (offset as i32, length as i32)
     }
 
+    fn translate_for_in_loop(&mut self, for_in_loop: &ForInLoop) -> InstructionsList {
+        todo!()
+    }
+
     fn translate_statement(&mut self, statement: &Statement) -> InstructionsList {
         match statement {
             Statement::Block(block) => self.translate_block(block),
@@ -1403,7 +1407,7 @@ impl WasmTranslator {
             Statement::DoWhileLoop(_do_while_loop) => todo!(),
             Statement::WhileLoop(while_loop) => self.translate_while_loop(while_loop),
             Statement::ForLoop(_for_loop) => todo!(),
-            Statement::ForInLoop(_for_in_loop) => todo!(),
+            Statement::ForInLoop(for_in_loop) => self.translate_for_in_loop(for_in_loop),
             Statement::ForOfLoop(_for_of_loop) => todo!(),
             Statement::Switch(switch) => self.translate_switch_statement(switch),
             Statement::Continue(_) => todo!(),
@@ -1717,7 +1721,7 @@ fn main() -> anyhow::Result<()> {
         },
     );
 
-    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
+    //    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
 
     let binary = wat::parse_str(module.to_string())?;
 

@@ -11,9 +11,7 @@ let instance,
   scriptResult,
   pollablesToWaitForLength = 0;
 
-// This is a hack to run test262 harness as jsshell. It gets '-r' as a second
-// argument
-const jsFile = process.argv[2] !== "-r" ? process.argv[2] : process.argv[3];
+const jsFile = process.argv[3];
 
 if (!jsFile) {
   console.error("Please provide a JavaScript file path");
@@ -154,28 +152,31 @@ const importObject = {
 };
 
 async function runJawsm(jsFile) {
-  // Verify paths exist before trying to execute
-  if (!existsSync(jawsmPath)) {
-    throw new Error(`jawsm binary not found at: ${jawsmPath}`);
-  }
-  if (!existsSync(jsFile)) {
-    throw new Error(`JavaScript file not found: ${process.argv}`);
-  }
-
   return new Promise((resolve, reject) => {
-    execFile(
-      jawsmPath,
-      [jsFile],
-      { maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          console.error(`jawsm stderr: ${stderr}`);
-          reject(error);
-          return;
-        }
-        resolve(Buffer.from(stdout));
-      },
-    );
+    // Spawn the process directly instead of using execFile
+    const proc = spawn(jawsmPath, [jsFile], {
+      stdio: ['inherit', 'pipe', 'inherit']
+    });
+    
+    const chunks = [];
+    
+    proc.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+    
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Process exited with code ${code}`));
+        return;
+      }
+      // Concatenate all chunks into a single buffer
+      const buffer = Buffer.concat(chunks);
+      resolve(buffer);
+    });
+    
+    proc.on('error', (err) => {
+      reject(err);
+    });
   });
 }
 

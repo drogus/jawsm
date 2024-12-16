@@ -121,6 +121,11 @@ pub fn generate_module() -> WatModule {
             own_prototype: mut anyref,
         }
 
+        struct GlobalThis {
+            properties: mut PropertyMap,
+            own_prototype: Object,
+        }
+
         struct Number {
             value: mut f64
         }
@@ -168,6 +173,7 @@ pub fn generate_module() -> WatModule {
         static mut global_number_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
         static mut current_string_lookup: Nullable<String> = null;
+        static mut global_this: Nullable<GlobalThis>  = null;
 
         // Memory management functions required by the Component Model
         #[export("cabi_realloc")]
@@ -245,6 +251,13 @@ pub fn generate_module() -> WatModule {
             }
 
             return new_promise;
+        }
+
+        fn create_global_this() -> GlobalThis {
+            return GlobalThis {
+                properties: create_propertymap(),
+                own_prototype: global_object_prototype as Object
+            };
         }
 
         fn create_object_prototype() -> Object {
@@ -954,6 +967,15 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, name, value, VARIABLE_VAR);
         }
 
+        fn delete_variable(scope: Scope, name: i32) {
+            let existing: Nullable<Variable> = variablemap_get(scope.variables, name);
+            let var: Variable;
+
+            if !ref_test!(existing, null) {
+                variablemap_delete(scope.variables, name);
+            }
+        }
+
         fn declare_variable(scope: Scope, name: i32, value: anyref, var_flag: i32) {
             let existing: Nullable<Variable> = variablemap_get(scope.variables, name);
             let var: Variable;
@@ -1028,7 +1050,30 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        fn variablemap_delete(map: VariableMap, key: i32) {
+            let mut entries: EntriesArray = map.entries;
+            let mut found: i32 = 0;
+            let mut i: i32 = 0;
+            let mut entry: VariableMapEntry;
+            let mut map_size: i32 = map.size;
 
+            // First, search for existing key
+            while found == 0 && i < map_size {
+                if ref_test!(entries[i], VariableMapEntry) {
+                    entry = entries[i] as VariableMapEntry;
+                    if entry.key == key {
+                        found = i;
+                    }
+                }
+                i += 1;
+            }
+
+            // If key was found, delete it
+            if found != 0 {
+                entries[found] = null;
+                // TODO: shift and shrink? or maybe only after there is more nulls?
+            }
+        }
 
         fn create_reference_error(name: i32) -> anyref {
             let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
@@ -1190,6 +1235,7 @@ pub fn generate_module() -> WatModule {
             let function: Function;
             let object: Object;
             let property: Property;
+            let global_this: GlobalThis;
 
             // TODO: as long as objects like Function and String are just another objects
             // we will have to reimplement a lot of stuff like this. It would be great
@@ -1216,6 +1262,14 @@ pub fn generate_module() -> WatModule {
                 if ref_test!(result, null) {
                     if !ref_test!(promise.own_prototype, null) {
                         result = get_property(promise.own_prototype, name);
+                    }
+                }
+            } else if ref_test!(target, GlobalThis) {
+                global_this = target as GlobalThis;
+                result = propertymap_get(global_this.properties, name);
+                if ref_test!(result, null) {
+                    if !ref_test!(global_this.own_prototype, null) {
+                        result = get_property(global_this.own_prototype, name);
                     }
                 }
             } else if ref_test!(target, Number) {
@@ -1252,6 +1306,10 @@ pub fn generate_module() -> WatModule {
             } else if ref_test!(target, Promise) {
                 promise = target as Promise;
                 propertymap_delete(promise.properties, name);
+            } else if ref_test!(target, GlobalThis) {
+                let global_this: GlobalThis = target as GlobalThis;
+                propertymap_delete(global_this.properties, name);
+                delete_variable(global_scope as Scope, name);
             } else if ref_test!(target, Number) {
                 // do nothing?
             }
@@ -1270,6 +1328,12 @@ pub fn generate_module() -> WatModule {
 
             if ref_test!(target, Promise) {
                 propertymap_set((target as Promise).properties, name, property);
+                return;
+            }
+
+            if ref_test!(target, GlobalThis) {
+                let key: i32 = propertymap_set((target as GlobalThis).properties, name, property);
+                declare_variable(global_scope as Scope, key, property.value, VARIABLE_VAR);
                 return;
             }
 
@@ -1293,6 +1357,12 @@ pub fn generate_module() -> WatModule {
 
                 if ref_test!(target, Promise) {
                     propertymap_set((target as Promise).properties, name, value_property);
+                    return;
+                }
+
+                if ref_test!(target, GlobalThis) {
+                    let key: i32 = propertymap_set((target as GlobalThis).properties, name, value_property);
+                    declare_variable(global_scope as Scope, key, value_property.value, VARIABLE_VAR);
                     return;
                 }
             } else {
@@ -1378,7 +1448,7 @@ pub fn generate_module() -> WatModule {
             return interner.current_offset;
         }
 
-        fn propertymap_set(map: PropertyMap, key_param: i32, value: Property) {
+        fn propertymap_set(map: PropertyMap, key_param: i32, value: Property) -> i32 {
             let mut key: i32 = key_param;
             let mut entries: PropertyEntriesArray = map.entries;
             let new_entry: PropertyMapEntry;
@@ -1405,7 +1475,7 @@ pub fn generate_module() -> WatModule {
                     if entry.key == key {
                         entry.value = value;
                         found = 1;
-                        return;
+                        return key;
                     }
                 }
                 i += 1;
@@ -1433,6 +1503,8 @@ pub fn generate_module() -> WatModule {
                 entries[map.size] = new_entry;
                 map.size = map.size + 1;
             }
+
+            return key;
         }
 
         fn get_interned_string(interner: Interner, name: String) -> i32 {
@@ -1701,6 +1773,10 @@ pub fn generate_module() -> WatModule {
             return 0;
         }
 
+        fn not_use_equal(arg1: anyref, arg2: anyref) -> i31ref {
+            return !loose_equal(arg1, arg2);
+        }
+
         fn loose_equal(arg1: anyref, arg2: anyref) -> i31ref {
             if (ref_test!(arg1, null) && ref_test!(arg2, null)) ||
                (is_a_string(arg1) && is_a_string(arg2)) ||
@@ -1853,11 +1929,31 @@ pub fn generate_module() -> WatModule {
             return new_static_string(data!("undefined"), 9);
         }
 
+        fn less_than_or_equal(arg1: anyref, arg2: anyref) -> i31ref {
+            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
+                let num1: Number = arg1 as Number;
+                let num2: Number = arg2 as Number;
+                let result: i32 = num1.value <= num2.value;
+                return result as i31ref;
+            }
+            return 0 as i31ref;
+        }
+
         fn less_than(arg1: anyref, arg2: anyref) -> i31ref {
             if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
                 let num1: Number = arg1 as Number;
                 let num2: Number = arg2 as Number;
                 let result: i32 = num1.value < num2.value;
+                return result as i31ref;
+            }
+            return 0 as i31ref;
+        }
+
+        fn greater_than(arg1: anyref, arg2: anyref) -> i31ref {
+            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
+                let num1: Number = arg1 as Number;
+                let num2: Number = arg2 as Number;
+                let result: i32 = num1.value > num2.value;
                 return result as i31ref;
             }
             return 0 as i31ref;
@@ -2421,6 +2517,9 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);
 
             setup_object_constructor(object_constructor);
+
+            global_this = create_global_this();
+            declare_variable(global_scope as Scope, data!("globalThis"), global_this, VARIABLE_CONST);
         }
 
         #[export("wasi:cli/run@0.2.1#run")]
