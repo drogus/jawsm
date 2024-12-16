@@ -70,7 +70,9 @@ def save_test_result(test_path, status, details = nil)
     details: details
   }
   File.open(RESULTS_FILE, 'a') do |f|
-    f.puts(JSON.generate(result))
+    f.print(",\n") unless @first_result
+    @first_result = false
+    f.print(JSON.pretty_generate(result))
   end
 end
 
@@ -183,8 +185,9 @@ end
 # Load excluded features
 @excluded_features = parse_features_file
 
-# Clear results file at start
-File.write(RESULTS_FILE, '')
+# Initialize results file with opening bracket
+File.write(RESULTS_FILE, "[\n")
+@first_result = true
 
 # Get test files based on command line argument or find all
 test_queue = Queue.new
@@ -271,5 +274,8 @@ if panic_locations.any?
     puts "  #{location}: #{count} occurrences"
   end
 end
+
+# Close the JSON array
+File.open(RESULTS_FILE, 'a') { |f| f.puts("\n]") }
 
 exit(total_failures > 0 ? 1 : 0)
