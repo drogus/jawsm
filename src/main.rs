@@ -31,6 +31,7 @@ use std::{
     io::{self, Read, Write},
     ops::ControlFlow,
     path::Path,
+    process::exit,
 };
 
 use jawsm::tail_call_transformer::TailCallTransformer;
@@ -1683,9 +1684,13 @@ fn main() -> anyhow::Result<()> {
     let mut interner = Interner::default();
 
     let mut parser = Parser::new(Source::from_bytes(&full));
-    let ast = parser
-        .parse_script(&mut interner)
-        .map_err(|e| anyhow!("JAWSM parsing error: {e}"))?;
+    let ast = match parser.parse_script(&mut interner) {
+        Ok(ast) => ast,
+        Err(e) => {
+            eprintln!("SyntaxError: foo");
+            exit(1);
+        }
+    };
 
     let module = jawsm::wasm::generate_module();
     let mut translator = WasmTranslator::new(interner, module);

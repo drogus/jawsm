@@ -19,7 +19,8 @@ let instance,
   scriptResult,
   pollablesToWaitForLength = 0;
 
-const jsFile = process.argv[3];
+
+const jsFile = process.argv[2] == "--test262" ? process.argv[3] : process.argv[2];
 
 // let dir = path.dirname(jsFile);
 // console.error("DIR", dir);
