@@ -4,6 +4,7 @@ const { execFile } = require("child_process");
 const { existsSync } = require("fs");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require('node:child_process')
 
 let instance,
   pollables = [],
@@ -12,6 +13,14 @@ let instance,
   pollablesToWaitForLength = 0;
 
 const jsFile = process.argv[3];
+
+// let dir = path.dirname(jsFile);
+// console.error("DIR", dir);
+//
+// const command = spawn('find', [dir])
+// command.stdout.on('data', output => {
+//     console.error("Output: ", output.toString())
+// })
 
 if (!jsFile) {
   console.error("Please provide a JavaScript file path");
