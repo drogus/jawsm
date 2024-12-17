@@ -3,8 +3,15 @@
 const { execFile } = require("child_process");
 const { existsSync } = require("fs");
 const fs = require("fs");
+const fsp = require("fs").promises;
 const path = require("path");
 const { spawn } = require('node:child_process')
+
+const DEBUG_DIR = '/Users/drogus/code/jawsm/debug/';
+// Ensure debug directory exists
+if (!fs.existsSync(DEBUG_DIR)) {
+  fs.mkdirSync(DEBUG_DIR, { recursive: true });
+}
 
 let instance,
   pollables = [],
@@ -190,16 +197,30 @@ async function runJawsm(jsFile) {
 }
 
 (async function () {
-  const bytes = await runJawsm(jsFile);
-  let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
-  instance = await WebAssembly.instantiate(compiled, importObject);
-  const exports = instance.exports;
+  try {
+    const bytes = await runJawsm(jsFile);
+    let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
+    instance = await WebAssembly.instantiate(compiled, importObject);
+    const exports = instance.exports;
 
-  scriptResult = exports["wasi:cli/run@0.2.1#run"]();
+    scriptResult = exports["wasi:cli/run@0.2.1#run"]();
 
-  if (pollablesToWaitForLength === 0) {
-    if (typeof process !== "undefined") {
-      process.exit(scriptResult);
+    if (pollablesToWaitForLength === 0) {
+      if (scriptResult !== 0) {
+        // Create debug filename by replacing slashes with dots
+        const debugFilename = jsFile.replace(/\//g, '.').replace(/^\.+/, '');
+        await fsp.writeFile(path.join(DEBUG_DIR, debugFilename), bytes);
+      }
+      if (typeof process !== "undefined") {
+        process.exit(scriptResult);
+      }
     }
+  } catch (error) {
+    // Create debug filename by replacing slashes with dots
+    const debugFilename = jsFile.replace(/\//g, '.').replace(/^\.+/, '');
+    await fsp.writeFile(path.join(DEBUG_DIR, debugFilename), bytes);
+    
+    console.error("Error running WebAssembly:", error);
+    process.exit(1);
   }
 })();
