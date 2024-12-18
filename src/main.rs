@@ -1393,6 +1393,65 @@ impl WasmTranslator {
         todo!()
     }
 
+    fn translate_for_loop(&mut self, for_loop: &ForLoop) -> InstructionsList {
+        use boa_ast::statement::iteration::ForLoopInitializer;
+        let mut initializer: InstructionsList = match for_loop.init() {
+            Some(init) => match init {
+                ForLoopInitializer::Expression(expr) => self.translate_expression(expr, true),
+                ForLoopInitializer::Var(decl) => self.translate_var(decl),
+                ForLoopInitializer::Lexical(decl) => {
+                    vec![
+                        W::local_get("$scope"),
+                        W::call("$new_scope"),
+                        W::local_set("$scope"),
+                        ..self.translate_lexical(decl),
+                    ]
+                }
+            },
+            None => vec![],
+        };
+        let mut condition: InstructionsList = match for_loop.condition() {
+            Some(expr) => self.translate_expression(expr, true),
+            None => vec![],
+        };
+        let final_instr: InstructionsList = match for_loop.final_expr() {
+            Some(expr) => self.translate_expression(expr, true),
+            None => vec![],
+        };
+
+        let scope_cleanup: InstructionsList = match for_loop.init() {
+            Some(ForLoopInitializer::Lexical(decl)) => {
+                vec![
+                    W::local_get("$scope"),
+                    W::call("$extract_parent_scope"),
+                    W::local_set("$scope"),
+                ]
+            }
+            _ => vec![],
+        };
+
+        let mut block_instructions = vec![
+            ..condition,
+            W::call("$cast_ref_to_i32_bool"),
+            W::i32_eqz(),
+            W::br_if("$break"),
+            ..self.translate_statement(for_loop.body()),
+            ..final_instr,
+            // TODO: we need unique naming to support loop in a loop. the same problem exists
+            //       for a while loop
+            W::br("$for_loop"),
+        ];
+
+        vec![
+            ..initializer,
+            W::r#loop(
+                "$for_loop",
+                vec![W::block("$break", Signature::default(), block_instructions)],
+            ),
+            ..scope_cleanup,
+        ]
+    }
+
     fn translate_statement(&mut self, statement: &Statement) -> InstructionsList {
         match statement {
             Statement::Block(block) => self.translate_block(block),
@@ -1402,7 +1461,7 @@ impl WasmTranslator {
             Statement::If(if_statement) => self.translate_if_statement(if_statement),
             Statement::DoWhileLoop(_do_while_loop) => todo!(),
             Statement::WhileLoop(while_loop) => self.translate_while_loop(while_loop),
-            Statement::ForLoop(_for_loop) => todo!(),
+            Statement::ForLoop(for_loop) => self.translate_for_loop(for_loop),
             Statement::ForInLoop(for_in_loop) => self.translate_for_in_loop(for_in_loop),
             Statement::ForOfLoop(_for_of_loop) => todo!(),
             Statement::Switch(switch) => self.translate_switch_statement(switch),

@@ -180,7 +180,7 @@ async function runJawsm(jsFile) {
     proc.stdout.on('data', (chunk) => {
       chunks.push(chunk);
     });
-    
+
     proc.on('close', (code) => {
       if (code !== 0) {
         reject(new Error(`Process exited with code ${code}`));

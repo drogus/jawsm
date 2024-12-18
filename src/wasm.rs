@@ -943,6 +943,10 @@ pub fn generate_module() -> WatModule {
             };
         }
 
+        fn extract_parent_scope(scope: Scope) -> Scope {
+            return scope.parent as Scope;
+        }
+
         fn assign_variable(scope: Scope, name: i32, value: anyref) {
             let mut current_scope: Nullable<Scope> = scope;
             let maybe_var: Nullable<Variable>;
