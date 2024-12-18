@@ -16,6 +16,7 @@ serde = { version = "1.0", features = ["derive"] }
 anyhow = "1"
 tera = "1.20.0"
 lazy_static = "1"
-tarnik-ast = { git = "https://github.com/drogus/tarnik" }
-tarnik = { git = "https://github.com/drogus/tarnik" }
+tarnik-ast = { path = "../tarnik/ast" }
+tarnik = { path = "../tarnik/generator" }
 wat = "1.221.2"
+velcro = "0.5"

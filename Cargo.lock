@@ -120,7 +120,7 @@ checksum = "240f4126219a83519bad05c9a40bfc0303921eeb571fc2d7e44c17ffac99d3f1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
  "synstructure",
 ]
 
@@ -303,7 +303,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -532,7 +532,7 @@ checksum = "1ec89e9337638ecdc08744df490b221a7399bf8d164eb52a665454e60e075ad6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -599,6 +599,7 @@ dependencies = [
  "tarnik-ast",
  "tera",
  "tinytemplate",
+ "velcro",
  "walrus",
  "wat",
 ]
@@ -734,7 +735,7 @@ dependencies = [
  "pest_meta",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -788,7 +789,7 @@ dependencies = [
  "phf_shared",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -940,7 +941,7 @@ checksum = "243902eda00fad750862fc144cea25caca5e20d615af0a81bee94ca738f1df1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -1002,6 +1003,17 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "syn"
+version = "1.0.109"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
 version = "2.0.90"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "919d3b74a5dd0ccd15aeb8f93e7006bd9e14c295087c9896a110f490752bcf31"
@@ -1019,13 +1031,12 @@ checksum = "c8af7666ab7b6390ab78131fb5b0fce11d6b7a6951602017c35fa82800708971"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
 name = "tarnik"
 version = "0.1.0"
-source = "git+https://github.com/drogus/tarnik#28ed95a622478f9ea17af601e9891e38f47dcc4c"
 dependencies = [
  "anyhow",
  "convert_case",
@@ -1033,14 +1044,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "syn",
+ "syn 2.0.90",
  "tarnik-ast",
 ]
 
 [[package]]
 name = "tarnik-ast"
 version = "0.1.0"
-source = "git+https://github.com/drogus/tarnik#28ed95a622478f9ea17af601e9891e38f47dcc4c"
 dependencies = [
  "indexmap 2.6.0",
 ]
@@ -1084,7 +1094,7 @@ checksum = "ae71770322cbd277e69d762a16c444af02aa0575ac0d174f0b9562d3b37f8602"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -1188,6 +1198,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
+name = "velcro"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31c6a51883ba1034757307e06dc4856cd5439ecf6804ce6c90d13d49496196fc"
+dependencies = [
+ "velcro_macros",
+]
+
+[[package]]
+name = "velcro_core"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "742cf45d07989b7614877e083602a8973890c75a81f47216b238d2f326ec916c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "velcro_macros"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b23c806d7b49977e6e12ee6d120ac01dcab702b51c652fdf1a6709ab5b8868c"
+dependencies = [
+ "syn 1.0.109",
+ "velcro_core",
+]
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1228,7 +1268,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -1259,7 +1299,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
  "wasm-bindgen-shared",
 ]
 
@@ -1281,7 +1321,7 @@ checksum = "26c6ab57572f7a24a4985830b120de1594465e5d500f24afe89e16b4e833ef68"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
@@ -1475,7 +1515,7 @@ checksum = "28cc31741b18cb6f1d5ff12f5b7523e3d6eb0852bbbad19d73905511d9849b95"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
  "synstructure",
 ]
 
@@ -1497,7 +1537,7 @@ checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -1517,7 +1557,7 @@ checksum = "0ea7b4a3637ea8669cedf0f1fd5c286a17f3de97b8dd5a70a6c167a1730e63a5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
  "synstructure",
 ]
 
@@ -1540,5 +1580,5 @@ checksum = "6eafa6dfb17584ea3e2bd6e76e0cc15ad7af12b09abdd1ca55961bed9b1063c6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.90",
 ]
