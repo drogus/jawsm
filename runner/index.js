@@ -205,23 +205,12 @@ async function runJawsm(jsFile) {
     const exports = instance.exports;
 
     scriptResult = exports["wasi:cli/run@0.2.1#run"]();
-
     if (pollablesToWaitForLength === 0) {
-      if (scriptResult !== 0) {
-        // Create debug filename by replacing slashes with dots
-        const debugFilename = jsFile.replace(/\//g, '.').replace(/^\.+/, '');
-        await fsp.writeFile(path.join(DEBUG_DIR, debugFilename), await fsp.readFile(jsFile));
-      }
       if (typeof process !== "undefined") {
         process.exit(scriptResult);
       }
     }
   } catch (error) {
-    // Create debug filename by replacing slashes with dots
-    const debugFilename = jsFile.replace(/\//g, '.').replace(/^\.+/, '');
-    await fsp.writeFile(path.join(DEBUG_DIR, debugFilename), await fsp.readFile(jsFile));
-    
-    console.error("Error running WebAssembly:", error);
     process.exit(1);
   }
 })();
