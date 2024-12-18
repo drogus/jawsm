@@ -562,7 +562,7 @@ impl WasmTranslator {
                                 W::i32_const(offset),
                                 W::call("$get_property"),
                                 W::local_get(&temp),
-                                W::call("$get_property_value"),
+                                W::call("$get_value_of_property"),
                             ]);
                             target
                         }
@@ -587,7 +587,7 @@ impl WasmTranslator {
                             target.append(&mut instructions);
                             target.push(W::call("$get_property_str"));
                             target.push(W::local_get(&target_local));
-                            target.push(W::call("$get_property_value"));
+                            target.push(W::call("$get_value_of_property"));
                             target
                         }
                     }
@@ -1097,7 +1097,7 @@ impl WasmTranslator {
             W::I32Const(self.insert_data_string("prototype").0),
             W::call("$get_property"),
             W::local_get(&constructor),
-            W::call("$get_property_value"),
+            W::call("$get_value_of_property"),
             W::local_set(&prototype_local),
         ];
         result.append(&mut self.translate_call(
@@ -1264,7 +1264,7 @@ impl WasmTranslator {
         } else if let UnaryOp::Delete = unary.op() {
             let mut instructions = self.translate_expression(unary.target(), true);
             match instructions.last() {
-                Some(W::Call(name)) if name == "$get_property_value" => {
+                Some(W::Call(name)) if name == "$get_value_of_property" => {
                     // I don't particularly like this, as this will fail as soon as we change the
                     // code generating these instructions to emit something different, but it
                     // should work for now

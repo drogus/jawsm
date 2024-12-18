@@ -276,6 +276,9 @@ pub fn generate_module() -> WatModule {
         fn setup_object_constructor(constructor: Function) {
             set_property(constructor, data!("create"),
                 create_property_function(global_scope as Scope, Object_create, null));
+
+            set_property(constructor, data!("defineProperty"),
+                create_property_function(global_scope as Scope, Object_defineProperty, null));
         }
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -286,6 +289,71 @@ pub fn generate_module() -> WatModule {
             let object: Object = new_object();
             object.own_prototype = arguments[0];
             return object;
+        }
+
+        fn Object_defineProperty(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let args_len: i32 = len!(arguments);
+
+            if args_len == 0 {
+                throw!(JSException, create_string_from_array("TypeError: Objct.defineProperty called on non-object"));
+            }
+
+            if args_len < 3 {
+                throw!(JSException, create_string_from_array("TypeError: Property descriptor must be an object"));
+            } else if !ref_test!(arguments[2], Object) {
+                throw!(JSException, create_string_from_array("TypeError: Property descriptor must be an object"));
+            }
+
+            let target: anyref = arguments[0];
+
+            if is_primitive(target) {
+                throw!(JSException, create_string_from_array("TypeError: Object.defineProprty called on non-object"));
+            }
+
+            let descriptor: Object = arguments[2] as Object;
+            // TODO: throw an arror if both (value or writable) and (get or set) are specified
+            // TODO: set value to AccessorMethod if get or set are defined
+            let property: Property = Property {
+                value: get_property_value(descriptor, data!("value")),
+                flags: 0
+            };
+
+            if js_is_true(get_property_value(descriptor, data!("configurable"))) {
+                property.flags = property.flags | PROPERTY_CONFIGURABLE;
+            }
+
+            if js_is_true(get_property_value(descriptor, data!("enumerable"))) {
+                property.flags = property.flags | PROPERTY_ENUMERABLE;
+            }
+
+            if js_is_true(get_property_value(descriptor, data!("writeable"))) {
+                property.flags = property.flags | PROPERTY_WRITABLE;
+            }
+
+            set_property_str(target, arguments[1], property);
+
+            return target;
+        }
+
+        fn js_is_true(value: anyref) -> i32 {
+            if ref_test!(value, null) {
+                return 0;
+            } else if ref_test!(value, Number) {
+                if (value as Number).value as i32 == 0 {
+                    return 0;
+                }
+            } else if ref_test!(value, i31ref) {
+                let value_i32: i32 = value as i31ref as i32;
+                if value_i32 == 0 || value_i32 == 2 {
+                    return 0;
+                }
+            }
+
+        return 1;
+        }
+
+        fn is_primitive(value: anyref) -> i32 {
+            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref);
         }
 
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -1163,7 +1231,17 @@ pub fn generate_module() -> WatModule {
             }
         }
 
-        fn get_property_value(property_arg: anyref, target: anyref) -> anyref {
+        fn get_property_value(target: anyref, offset: i32) -> anyref {
+            let property: Nullable<Property> = get_property(target, offset);
+
+            if !ref_test!(property, null) {
+                return get_value_of_property(property, target);
+            }
+
+            return null;
+        }
+
+        fn get_value_of_property(property_arg: anyref, target: anyref) -> anyref {
             if ref_test!(property_arg, Property) {
                 let property: Property = property_arg as Property;
                 if (property.flags & PROPERTY_IS_GETTER) != 0 {
@@ -1180,6 +1258,8 @@ pub fn generate_module() -> WatModule {
         }
 
         fn set_property_value_str(target: anyref, name: anyref, value: anyref) {
+            // TODO: this code is almost the same as set_property_str. We should
+            // extract the code that fetches an offset to a separate function
             let offset: i32 = 0;
             let name_str: String = String {
                 data: [0; 0],
@@ -1338,6 +1418,61 @@ pub fn generate_module() -> WatModule {
             } else if ref_test!(target, Number) {
                 // do nothing?
             }
+        }
+
+        fn set_property_str(target: anyref, name: anyref, property: Property) {
+            // TODO: this code is almost the same as set_property_value_str. We should
+            // extract the code that fetches an offset to a separate function
+            let offset: i32 = 0;
+            let name_str: String = String {
+                data: [0; 0],
+                length: 0
+            };
+
+            if ref_test!(name, String) {
+                offset = get_data_offset_str((name as String).data);
+                if offset == 0 {
+                    name_str = name as String;
+                }
+            } else if ref_test!(name, StaticString) {
+                offset = get_data_offset_static_str(name as StaticString);
+                if offset == 0 {
+                    name_str = convert_static_string_to_string(name as StaticString);
+                }
+            } else {
+                let maybe_to_string: Nullable<Property> =
+                    get_property_str(name, create_string_from_array("toString"));
+                if ref_test!(maybe_to_string, null) {
+                    // we can't convert to string
+                    throw!(JSException, create_string_from_array("Can't convert property name to string"));
+                } else {
+                    let to_string: Property = maybe_to_string as Property;
+                    if ref_test!(to_string.value, Function) {
+                        let result: anyref = call_function(to_string.value as Function, target, create_arguments_0());
+                        if ref_test!(result, String) {
+                            name_str = result as String;
+                            offset = get_data_offset_str(name_str.data);
+                        } else if ref_test!(result, StaticString) {
+                            offset = get_data_offset_static_str(result as StaticString);
+                            if offset == 0 {
+                                name_str = convert_static_string_to_string(result as StaticString);
+                            }
+                        } else {
+                            name_str = convert_to_string(result);
+                            offset = get_data_offset_str(name_str.data);
+                        }
+                    } else {
+                        // toString is not a function, error out
+                        throw!(JSException, create_string_from_array("toString is not a function"));
+                    }
+                }
+            }
+
+            if offset == 0 {
+                current_string_lookup = name_str;
+            }
+
+            set_property(target, offset, property);
         }
 
         fn set_property(target: anyref, name: i32, property: Property) {
