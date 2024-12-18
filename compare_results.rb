@@ -20,14 +20,19 @@ rescue Errno::ENOENT => e
   exit 1
 end
 
+count = first_results.inject(0) { |sum, r| sum + (r['result']['pass'] ? 1 : 0) }
+puts count
+count = second_results.inject(0) { |sum, r| sum + (r['result']['pass'] ? 1 : 0) }
+puts count
+
 # Create lookup hash for second results
 second_lookup = second_results.each_with_object({}) do |result, hash|
-  hash[result['file']] = result['pass']
+  hash[result['file']] = result['result']['pass']
 end
 
 # Find tests that passed in first but failed in second
 regressions = first_results.select do |result|
-  result['pass'] && second_lookup.key?(result['file']) && !second_lookup[result['file']]
+  result['result']['pass'] && second_lookup.key?(result['file']) && !second_lookup[result['file']]
 end
 
 if regressions.empty?
