@@ -1084,6 +1084,27 @@ pub fn generate_module() -> WatModule {
             return return_new_instance_result(object, null, get_property(constructor, data!("prototype")), constructor);
         }
 
+        // This is doing the same thing that get_variable, but if it can't find a variable it just
+        // returns undefined, so it doesn't error out for typeof
+        fn get_variable_for_typeof(scope: Scope, name: i32) -> anyref {
+            let mut current_scope: Nullable<Scope> = scope;
+            let var: Nullable<Variable>;
+
+            while 1 {
+                var = variablemap_get(current_scope.variables, name);
+                if ref_test!(var, null) {
+                    current_scope = current_scope.parent;
+                    if ref_test!(current_scope, null) {
+                        return null;
+                    }
+                } else {
+                    return (var as Variable).value;
+                }
+            }
+
+            return null;
+        }
+
         fn get_variable(scope: Scope, name: i32) -> anyref {
             let mut current_scope: Nullable<Scope> = scope;
             let var: Nullable<Variable>;

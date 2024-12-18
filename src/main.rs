@@ -33,6 +33,7 @@ use std::{
     path::Path,
     process::exit,
 };
+use velcro::vec;
 
 use jawsm::tail_call_transformer::TailCallTransformer;
 use tarnik_ast::{
@@ -1252,30 +1253,14 @@ impl WasmTranslator {
                 .add_local("$result", WasmType::Anyref);
             let (offset, length) = self.insert_data_string("undefined");
             let mut target = self.translate_expression(unary.target(), true);
+            if let Some(W::Call(name)) = target.last().clone() {
+                if name == "$get_variable" {
+                    target.pop();
+                    target.push(W::call("$get_variable_for_typeof"));
+                }
+            }
             target.push(W::call("$type_of"));
-            target.push(W::local_set(&result_local));
-            let catch_instructions = vec![
-                W::call("$try_i31ref"),
-                W::I31GetS,
-                W::I32Const(999999999),
-                W::I32Eq,
-                // it's a reference error, return unddefined
-                W::r#if(
-                    vec![
-                        W::i32_const(offset),
-                        W::i32_const(length),
-                        W::call("$new_static_string"),
-                        W::local_set(&result_local),
-                    ],
-                    None,
-                ),
-            ];
-            let instr = W::r#try(
-                target,
-                vec![("$JSException".to_string(), catch_instructions)],
-                None,
-            );
-            vec![instr, W::local_get(&result_local)]
+            target
         } else if let UnaryOp::Delete = unary.op() {
             let mut instructions = self.translate_expression(unary.target(), true);
             match instructions.last() {
