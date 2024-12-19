@@ -198,19 +198,15 @@ async function runJawsm(jsFile) {
 }
 
 (async function () {
-  try {
-    const bytes = await runJawsm(jsFile);
-    let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
-    instance = await WebAssembly.instantiate(compiled, importObject);
-    const exports = instance.exports;
+  const bytes = await runJawsm(jsFile);
+  let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
+  instance = await WebAssembly.instantiate(compiled, importObject);
+  const exports = instance.exports;
 
-    scriptResult = exports["wasi:cli/run@0.2.1#run"]();
-    if (pollablesToWaitForLength === 0) {
-      if (typeof process !== "undefined") {
-        process.exit(scriptResult);
-      }
+  scriptResult = exports["wasi:cli/run@0.2.1#run"]();
+  if (pollablesToWaitForLength === 0) {
+    if (typeof process !== "undefined") {
+      process.exit(scriptResult);
     }
-  } catch (error) {
-    process.exit(1);
   }
 })();
