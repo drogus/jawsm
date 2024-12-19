@@ -168,17 +168,23 @@ const importObject = {
   },
 };
 
+let STDERR = [];
+
 async function runJawsm(jsFile) {
   return new Promise((resolve, reject) => {
     // Spawn the process directly instead of using execFile
     const proc = spawn(jawsmPath, [jsFile], {
-      stdio: ['inherit', 'pipe', 'inherit']
+      //stdio: ['inherit', 'pipe', 'inherit']
     });
     
     const chunks = [];
     
     proc.stdout.on('data', (chunk) => {
       chunks.push(chunk);
+    });
+
+    proc.stderr.on('data', (chunk) => {
+      STDERR.push(chunk);
     });
 
     proc.on('close', (code) => {
@@ -198,15 +204,31 @@ async function runJawsm(jsFile) {
 }
 
 (async function () {
-  const bytes = await runJawsm(jsFile);
-  let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
-  instance = await WebAssembly.instantiate(compiled, importObject);
-  const exports = instance.exports;
+  try {
+    const bytes = await runJawsm(jsFile);
+    let compiled = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
+    instance = await WebAssembly.instantiate(compiled, importObject);
+    const exports = instance.exports;
 
-  scriptResult = exports["wasi:cli/run@0.2.1#run"]();
-  if (pollablesToWaitForLength === 0) {
-    if (typeof process !== "undefined") {
-      process.exit(scriptResult);
+    scriptResult = exports["wasi:cli/run@0.2.1#run"]();
+    if (pollablesToWaitForLength === 0) {
+      if (typeof process !== "undefined") {
+        process.exit(scriptResult);
+      }
     }
+  } catch(error) {
+    // For some reason the test262 runner will not properly pass a test that asserts
+    // for a SyntaxError if there is also any other error present. On the other hand
+    // it will also *pass* a test that should fail if there is no error message present,
+    // even though the exit code was 0. That's why we check if STDERR from the JAWSM
+    // run has any output - if it does, it means that it was JAWSM that failed. Otherwise
+    // we output the error we got from running WASM
+    let stderr = STDERR.join("");
+    if (stderr == "") {
+      console.error(error);
+    } else {
+      console.error(stderr);
+    }
+    process.exit(1);
   }
 })();

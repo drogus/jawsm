@@ -1731,7 +1731,7 @@ fn main() -> anyhow::Result<()> {
     let ast = match parser.parse_script(&mut interner) {
         Ok(ast) => ast,
         Err(e) => {
-            eprintln!("SyntaxError: foo");
+            eprintln!("SyntaxError: {e}");
             exit(1);
         }
     };
