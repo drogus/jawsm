@@ -1748,9 +1748,16 @@ pub fn generate_module() -> WatModule {
         }
 
         fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
-            let function: Function = func as Function;
-            let js_func: JSFunc = function.func;
+            let function: Function;
+            let js_func: JSFunc;
             let current_this: anyref;
+
+            if !ref_test!(func, Function) {
+                throw!(JSException, create_string_from_array("TypeError: Can't call a non-function object"));
+            }
+
+            function = func as Function;
+            js_func = function.func;
 
             if ref_test!(this, null) {
                 current_this = function.this;
