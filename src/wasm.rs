@@ -316,12 +316,55 @@ pub fn generate_module() -> WatModule {
                 throw!(JSException, create_string_from_array("TypeError: Object.defineProprty called on non-object"));
             }
 
+            let existing_property: Nullable<Property> = get_property_str(target, arguments[1]);
+            if !ref_test!(existing_property, null) {
+                throw!(JSException, create_string_from_array("TypeError: Cannot redefine property"));
+            }
+
             let descriptor: Object = arguments[2] as Object;
-            // TODO: throw an arror if both (value or writable) and (get or set) are specified
-            // TODO: set value to AccessorMethod if get or set are defined
+            let get_or_set: i32 = !ref_test!(get_property(descriptor, data!("get")), null) || 
+                                  !ref_test!(get_property(descriptor, data!("set")), null);
+
+            if (!ref_test!(get_property(descriptor, data!("writable")), null) || 
+                !ref_test!(get_property(descriptor, data!("value")), null)) &&
+                get_or_set {
+                throw!(JSException, create_string_from_array("TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute"));
+            }
+
+            let value: anyref = null;
+            let flags: i32 = 0;
+
+            if get_or_set {
+                let getter: anyref = get_property_value(descriptor, data!("get"));
+                let setter: anyref = get_property_value(descriptor, data!("set"));
+
+                // if either a getter or a setter are not undefined and are not a function raise an error
+                if !ref_test!(getter, null) && !ref_test!(getter, Function) {
+                    throw!(JSException, create_string_from_array("TypeError: Getter must be a function"));
+                }
+                if !ref_test!(setter, null) && !ref_test!(setter, Function) {
+                    throw!(JSException, create_string_from_array("TypeError: Setter must be a function"));
+                }
+
+                let accessor: AccessorMethod = AccessorMethod { get: null, set: null };
+
+                if ref_test!(getter, Function) {
+                    accessor.get = getter as Function;
+                    flags = flags | PROPERTY_IS_GETTER;
+                }
+                if ref_test!(setter, Function) {
+                    accessor.set = setter as Function;
+                    flags = flags | PROPERTY_IS_SETTER;
+                }
+
+                value = accessor;
+            } else {
+                value = get_property_value(descriptor, data!("value"));
+            }
+
             let property: Property = Property {
-                value: get_property_value(descriptor, data!("value")),
-                flags: 0
+                value: value,
+                flags: flags
             };
 
             if js_is_true(get_property_value(descriptor, data!("configurable"))) {
