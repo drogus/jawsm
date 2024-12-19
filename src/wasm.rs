@@ -1817,6 +1817,31 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn mul(arg1: anyref, arg2: anyref) -> anyref {
+            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
+                let num1: Number = arg1 as Number;
+                let num2: Number = arg2 as Number;
+                let result: f64 = num1.value * num2.value;
+                return new_number(result);
+            }
+            return null;
+        }
+
+        fn mod_op(arg1: anyref, arg2: anyref) -> anyref {
+            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
+                let num1: Number = arg1 as Number;
+                let num2: Number = arg2 as Number;
+                // TODO: this is wrong as in JS you can run modulo on floats, but for now I want to
+                // handle at least integers
+                let int1: i64 = num1.value as i64;
+                let int2: i64 = num2.value as i64;
+                let modulo_result: i64 = int1 % int2;
+                let result: f64 = modulo_result as f64;
+                return new_number(result);
+            }
+            return null;
+        }
+
         fn strict_not_equal(arg1: anyref, arg2: anyref) -> i31ref {
             return !strict_equal(arg1, arg2);
         }

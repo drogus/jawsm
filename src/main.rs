@@ -447,7 +447,7 @@ impl WasmTranslator {
                     ArithmeticOp::Div => "$div",
                     ArithmeticOp::Mul => "$mul",
                     ArithmeticOp::Exp => "$exp",
-                    ArithmeticOp::Mod => "$mod",
+                    ArithmeticOp::Mod => "$mod_op",
                 };
                 // TODO: this will probably need translating to
                 // multiple lines and saving to local vars
