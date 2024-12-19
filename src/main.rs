@@ -446,7 +446,7 @@ impl WasmTranslator {
                     ArithmeticOp::Sub => "$sub",
                     ArithmeticOp::Div => "$div",
                     ArithmeticOp::Mul => "$mul",
-                    ArithmeticOp::Exp => "$exp",
+                    ArithmeticOp::Exp =>  todo!(),
                     ArithmeticOp::Mod => "$mod_op",
                 };
                 // TODO: this will probably need translating to
@@ -459,7 +459,17 @@ impl WasmTranslator {
                 result.push(W::call(func.to_string()));
                 result
             }
-            BinaryOp::Bitwise(_bitwise_op) => todo!(),
+            BinaryOp::Bitwise(bitwise_op) => {
+                use boa_ast::expression::operator::binary::BitwiseOp;
+                match bitwise_op {
+                    BitwiseOp::And => todo!(),
+                    BitwiseOp::Or => todo!(),
+                    BitwiseOp::Xor => todo!(),
+                    BitwiseOp::Shl => todo!(),
+                    BitwiseOp::Shr => todo!(),
+                    BitwiseOp::UShr => todo!(),
+                }
+            }
             BinaryOp::Relational(relational_op) => {
                 let func_name = match relational_op {
                     RelationalOp::Equal => "$loose_equal",
@@ -1160,80 +1170,41 @@ impl WasmTranslator {
         use boa_ast::expression::operator::assign::AssignOp;
         use boa_ast::expression::operator::assign::AssignTarget;
 
-        match assign.op() {
-            AssignOp::Assign => {
-                let mut rhs = self.translate_expression(assign.rhs(), true);
-                match assign.lhs() {
-                    AssignTarget::Identifier(identifier) => {
-                        let offset = self.add_identifier(identifier);
-                        // identifier.sym().get(),
-                        let rhs_var = self.current_function().add_local("$rhs", WasmType::Anyref);
-                        rhs.append(&mut vec![
-                            W::local_set(&rhs_var),
-                            W::local_get("$scope".to_string()),
-                            W::i32_const(offset),
-                            W::local_get(&rhs_var),
-                            W::call("$assign_variable".to_string()),
-                        ]);
-                        rhs
-                    }
-                    AssignTarget::Access(property_access) => {
-                        self.translate_property_access(property_access, Some(rhs))
-                    }
-                    AssignTarget::Pattern(_pattern) => todo!(),
+        if let AssignOp::Assign = assign.op() {
+            let mut rhs = self.translate_expression(assign.rhs(), true);
+            return match assign.lhs() {
+                AssignTarget::Identifier(identifier) => {
+                    let offset = self.add_identifier(identifier);
+                    // identifier.sym().get(),
+                    let rhs_var = self.current_function().add_local("$rhs", WasmType::Anyref);
+                    rhs.append(&mut vec![
+                        W::local_set(&rhs_var),
+                        W::local_get("$scope".to_string()),
+                        W::i32_const(offset),
+                        W::local_get(&rhs_var),
+                        W::call("$assign_variable".to_string()),
+                    ]);
+                    rhs
                 }
-            }
-            AssignOp::Add => {
-                let mut rhs = self.translate_expression(assign.rhs(), true);
-                match assign.lhs() {
-                    AssignTarget::Identifier(identifier) => {
-                        let offset = self.add_identifier(identifier);
-                        // identifier.sym().get(),
-                        let rhs_var = self.current_function().add_local("$rhs", WasmType::Anyref);
-                        let mut result = vec![];
-                        result.append(&mut rhs);
-                        result.append(&mut vec![
-                            W::local_set(&rhs_var),
-                            W::local_get("$scope"),
-                            W::i32_const(offset),
-                            W::call("$get_variable"),
-                            W::local_get(&rhs_var),
-                            W::call("$add"),
-                            W::local_set(&rhs_var),
-                            W::local_get("$scope".to_string()),
-                            W::i32_const(offset),
-                            W::local_get(&rhs_var),
-                            W::call("$assign_variable"),
-                        ]);
-                        result
-                    }
-                    AssignTarget::Access(property_access) => {
-                        let rhs_var = self.current_function().add_local("$rhs", WasmType::Anyref);
-                        let mut result = vec![];
-                        result.append(&mut rhs);
-                        result.push(W::local_set(&rhs_var));
-                        result.append(&mut self.translate_property_access(property_access, None));
-                        result.append(&mut vec![
-                            W::local_get(&rhs_var),
-                            W::call("$add"),
-                            W::local_set(&rhs_var),
-                        ]);
-                        result.append(&mut self.translate_property_access(
-                            property_access,
-                            Some(vec![W::local_get(&rhs_var)]),
-                        ));
-                        result
-                    }
-                    AssignTarget::Pattern(_pattern) => todo!(),
+                AssignTarget::Access(property_access) => {
+                    self.translate_property_access(property_access, Some(rhs))
                 }
-            }
-            AssignOp::Sub => todo!(),
-            AssignOp::Mul => todo!(),
-            AssignOp::Div => todo!(),
-            AssignOp::Mod => todo!(),
+                AssignTarget::Pattern(_pattern) => todo!(),
+            };
+        }
+
+        let mut rhs = self.translate_expression(assign.rhs(), true);
+
+        let func_name = match assign.op() {
+            AssignOp::Assign => unreachable!(),
+            AssignOp::Add => "$add",
+            AssignOp::Sub => "$sub",
+            AssignOp::Mul => "$mul",
+            AssignOp::Div => "$div",
+            AssignOp::Mod => "$mod_op",
             AssignOp::Exp => todo!(),
-            AssignOp::And => todo!(),
-            AssignOp::Or => todo!(),
+            AssignOp::And => "$logical_and",
+            AssignOp::Or => "$logical_or",
             AssignOp::Xor => todo!(),
             AssignOp::Shl => todo!(),
             AssignOp::Shr => todo!(),
@@ -1241,6 +1212,48 @@ impl WasmTranslator {
             AssignOp::BoolAnd => todo!(),
             AssignOp::BoolOr => todo!(),
             AssignOp::Coalesce => todo!(),
+        };
+
+        match assign.lhs() {
+            AssignTarget::Identifier(identifier) => {
+                let offset = self.add_identifier(identifier);
+                // identifier.sym().get(),
+                let rhs_var = self.current_function().add_local("$rhs", WasmType::Anyref);
+                let mut result = vec![];
+                result.append(&mut rhs);
+                result.append(&mut vec![
+                    W::local_set(&rhs_var),
+                    W::local_get("$scope"),
+                    W::i32_const(offset),
+                    W::call("$get_variable"),
+                    W::local_get(&rhs_var),
+                    W::call(func_name),
+                    W::local_set(&rhs_var),
+                    W::local_get("$scope".to_string()),
+                    W::i32_const(offset),
+                    W::local_get(&rhs_var),
+                    W::call("$assign_variable"),
+                ]);
+                result
+            }
+            AssignTarget::Access(property_access) => {
+                let rhs_var = self.current_function().add_local("$rhs", WasmType::Anyref);
+                let mut result = vec![];
+                result.append(&mut rhs);
+                result.push(W::local_set(&rhs_var));
+                result.append(&mut self.translate_property_access(property_access, None));
+                result.append(&mut vec![
+                    W::local_get(&rhs_var),
+                    W::call(func_name),
+                    W::local_set(&rhs_var),
+                ]);
+                result.append(&mut self.translate_property_access(
+                    property_access,
+                    Some(vec![W::local_get(&rhs_var)]),
+                ));
+                result
+            }
+            AssignTarget::Pattern(_pattern) => todo!(),
         }
     }
 
@@ -1296,7 +1309,7 @@ impl WasmTranslator {
             let mut instructions = self.translate_expression(unary.target(), true);
             match unary.op() {
                 UnaryOp::Minus => instructions.push(W::call("$op_minus")),
-                UnaryOp::Plus => todo!(),
+                UnaryOp::Plus => {}
                 UnaryOp::Not => instructions.push(W::call("$logical_not")),
                 UnaryOp::Tilde => todo!(),
                 UnaryOp::TypeOf => unreachable!(),
