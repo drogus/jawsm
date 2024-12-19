@@ -1713,8 +1713,18 @@ impl<'a> Visitor<'a> for WasmTranslator {
         //     "visit_statement: {}",
         //     node.to_interned_string(&self.interner)
         // );
-        let instructions = self.translate_statement(node);
-        self.current_function().add_instructions(instructions);
+        match node {
+            Statement::Expression(Expression::Literal(Literal::String(sym)))
+                if self.interner.resolve(*sym).unwrap().to_string() == "use strict" =>
+            {
+                self.current_function()
+                    .add_instruction(W::call("$enable_global_strict_mode"));
+            }
+            stmt => {
+                let instructions = self.translate_statement(stmt);
+                self.current_function().add_instructions(instructions);
+            }
+        }
         ControlFlow::Continue(())
     }
 

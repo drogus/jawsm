@@ -31,6 +31,8 @@ pub fn generate_module() -> WatModule {
         static PROPERTY_IS_GETTER: i32    = 0b00001000;
         static PROPERTY_IS_SETTER: i32    = 0b00010000;
 
+        static mut global_strict_mode: i32 = 0;
+
         type CharArray = [mut i8];
 
         struct String {
@@ -187,6 +189,10 @@ pub fn generate_module() -> WatModule {
         fn canonical_abi_free(ptr: i32, size: i32) {
             // TODO: implement something sensible here or find examples on how
             // it's usually done
+        }
+
+        fn enable_global_strict_mode() {
+            global_strict_mode = 1;
         }
 
         fn new_pollable(id: i32, func: anyref) -> Pollable {
@@ -1034,9 +1040,11 @@ pub fn generate_module() -> WatModule {
                 }
             }
 
-            // TODO: if there's no variable found JS still lets you assign, but
-            // it saves it on the global scope
-            declare_variable(global_scope as Scope, name, value, VARIABLE_VAR);
+            if global_strict_mode == 0 {
+                declare_variable(global_scope as Scope, name, value, VARIABLE_VAR);
+            } else {
+                throw!(JSException, create_string_from_array("ReferenceError: variable not defined"));
+            }
         }
 
         fn delete_variable(scope: Scope, name: i32) {
