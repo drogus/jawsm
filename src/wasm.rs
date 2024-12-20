@@ -322,10 +322,10 @@ pub fn generate_module() -> WatModule {
             }
 
             let descriptor: Object = arguments[2] as Object;
-            let get_or_set: i32 = !ref_test!(get_property(descriptor, data!("get")), null) || 
+            let get_or_set: i32 = !ref_test!(get_property(descriptor, data!("get")), null) ||
                                   !ref_test!(get_property(descriptor, data!("set")), null);
 
-            if (!ref_test!(get_property(descriptor, data!("writable")), null) || 
+            if (!ref_test!(get_property(descriptor, data!("writable")), null) ||
                 !ref_test!(get_property(descriptor, data!("value")), null)) &&
                 get_or_set {
                 throw!(JSException, create_string_from_array("TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute"));
@@ -787,11 +787,11 @@ pub fn generate_module() -> WatModule {
             if ref_test!(result, Object) {
                 object = result as Object;
                 object.own_prototype = prototype;
-                set_property(object, data!("constructor"), create_property(constructor));
+                set_property(object, data!("constructor"), create_bare_property(constructor));
             } else if ref_test!(result, Promise) {
                 promise = result as Promise;
                 promise.own_prototype = prototype;
-                set_property(promise, data!("constructor"), create_property(constructor));
+                set_property(promise, data!("constructor"), create_bare_property(constructor));
             }
 
             return result;
@@ -908,8 +908,12 @@ pub fn generate_module() -> WatModule {
         fn create_property(value: anyref) -> Property {
             return Property {
                 value: value,
-                flags: PROPERTY_WRITABLE
+                flags: PROPERTY_WRITABLE | PROPERTY_ENUMERABLE | PROPERTY_CONFIGURABLE
             };
+        }
+
+        fn create_bare_property(value: anyref) -> Property {
+            return Property { value: value, flags: 0 };
         }
 
         fn create_get_property(value: anyref, target: anyref, name: i32) -> Property {
@@ -959,7 +963,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_property_function(scope: Scope, function: JSFunc, this: anyref) -> Property {
-            return create_property(new_function(scope, function, this));
+            return Property {
+                value: new_function(scope, function, this),
+                flags: 0,
+            };
         }
 
         fn new_variablemap() -> VariableMap {
@@ -1716,6 +1723,28 @@ pub fn generate_module() -> WatModule {
             }
 
             return key;
+        }
+
+        fn get_interned_string_by_key(interner: Interner, key: i32) -> Nullable<String> {
+            let mut entries: InternedStringArray = interner.entries;
+            let length: i32 = interner.length;
+            let mut entry: InternedString;
+
+            let i: i32 = 0;
+            while i < length {
+                if !ref_test!(entries[i], null) {
+                    // TODO: not sure why we would ahve a null here
+                    entry = entries[i] as InternedString;
+
+                    if key == entry.offset {
+                        return entry.value;
+                    }
+
+                }
+                i += 1;
+            }
+
+            return null as Nullable<String>;
         }
 
         fn get_interned_string(interner: Interner, name: String) -> i32 {
@@ -2753,8 +2782,8 @@ pub fn generate_module() -> WatModule {
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
 
-            set_property(promise_constructor, data!("prototype"), create_property(promise_prototype));
-            set_property(object_constructor, data!("prototype"), create_property(global_object_prototype));
+            set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
+            set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
 
             declare_variable(global_scope as Scope, data!("Promise"), promise_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);

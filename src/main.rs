@@ -446,7 +446,7 @@ impl WasmTranslator {
                     ArithmeticOp::Sub => "$sub",
                     ArithmeticOp::Div => "$div",
                     ArithmeticOp::Mul => "$mul",
-                    ArithmeticOp::Exp =>  todo!(),
+                    ArithmeticOp::Exp => todo!(),
                     ArithmeticOp::Mod => "$mod_op",
                 };
                 // TODO: this will probably need translating to
@@ -1413,6 +1413,7 @@ impl WasmTranslator {
                 ForLoopInitializer::Expression(expr) => self.translate_expression(expr, true),
                 ForLoopInitializer::Var(decl) => self.translate_var(decl),
                 ForLoopInitializer::Lexical(decl) => {
+                    // TODO: this is wrong, a new scope should be always created
                     vec![
                         W::local_get("$scope"),
                         W::call("$new_scope"),
