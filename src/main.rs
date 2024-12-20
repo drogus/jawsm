@@ -1403,7 +1403,119 @@ impl WasmTranslator {
     }
 
     fn translate_for_in_loop(&mut self, for_in_loop: &ForInLoop) -> InstructionsList {
-        todo!()
+        use boa_ast::declaration::Binding;
+        use boa_ast::statement::iteration::IterableLoopInitializer;
+        let target = self.translate_expression(for_in_loop.target(), true);
+
+        let current = self
+            .current_function()
+            .add_local("$current", WasmType::Anyref);
+        let i = self.current_function().add_local("$i", WasmType::I32);
+        let length = self.current_function().add_local("$length", WasmType::I32);
+        let properties = self.current_function().add_local(
+            "$properties",
+            WasmType::Ref("$StringArray".to_string(), Nullable::False)
+        );
+
+        let initializer = match for_in_loop.initializer() {
+            IterableLoopInitializer::Identifier(identifier) => {
+                vec![
+                    W::local_get("$scope"),
+                    W::I32Const(identifier.sym().get() as i32),
+                    W::local_get(&current),
+                    W::call("$assign_variable"),
+                ]
+            }
+            IterableLoopInitializer::Access(property_access) => {
+                self.translate_property_access(property_access, Some(vec![W::local_get(&current)]))
+            },
+            IterableLoopInitializer::Var(var) =>  match var.binding() {
+                Binding::Identifier(identifier) => {
+                    let s = self.interner.resolve(identifier.sym()).unwrap().to_string();
+                    let (offset, _) = self.insert_data_string(&s);
+                    vec![
+                        W::local_get("$scope"),
+                        W::I32Const(offset),
+                        W::local_get(&current),
+                        W::i32_const(VarType::Var.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
+                }
+                Binding::Pattern(_) => todo!(),
+            }
+            IterableLoopInitializer::Let(binding) => match binding {
+                Binding::Identifier(identifier) => {
+                    let s = self.interner.resolve(identifier.sym()).unwrap().to_string();
+                    let (offset, _) = self.insert_data_string(&s);
+                    vec![
+                        W::local_get("$scope"),
+                        W::I32Const(offset),
+                        W::local_get(&current),
+                        W::i32_const(VarType::Let.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
+                }
+                Binding::Pattern(_) => todo!(),
+            },
+            IterableLoopInitializer::Const(binding) => match binding {
+                Binding::Identifier(identifier) => {
+                    let s = self.interner.resolve(identifier.sym()).unwrap().to_string();
+                    let (offset, _) = self.insert_data_string(&s);
+                    vec![
+                        W::local_get("$scope"),
+                        W::I32Const(offset),
+                        W::local_get(&current),
+                        W::i32_const(VarType::Const.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
+                }
+                Binding::Pattern(_) => todo!(),
+            }
+            IterableLoopInitializer::Pattern(_) => todo!(),
+        };
+
+        let mut block_instructions = vec![
+            // set up new scope
+            W::local_get("$scope"),
+            W::call("$new_scope"),
+            W::local_set("$scope"),
+            // check if we're done
+            W::local_get(&i),
+            W::local_get(&length),
+            W::I32GeS,
+            W::br_if("$break"),
+            // set up the current element
+            W::local_get(&properties),
+            W::local_get(&i),
+            W::array_get("$StringArray"),
+            W::local_set(&current),
+            // execute variable initializer
+            ..initializer,
+            ..self.translate_statement(for_in_loop.body()),
+            W::local_get(&i),
+            W::I32Const(1),
+            W::I32Add,
+            W::local_set(&i),
+            // scope cleanup
+            W::local_get("$scope"),
+            W::call("$extract_parent_scope"),
+            W::local_set("$scope"),
+            W::br("$for_loop"),
+        ];
+
+        vec![
+            ..target,
+            W::call("$get_enumerable_property_names"),
+            W::local_tee(&properties),
+            W::ArrayLen,
+            W::local_set(&length),
+            W::I32Const(0),
+            W::local_set(&i),
+            W::r#loop(
+                "$for_loop",
+                vec![W::block("$break", Signature::default(), block_instructions)],
+            ),
+        ]
     }
 
     fn translate_for_loop(&mut self, for_loop: &ForLoop) -> InstructionsList {

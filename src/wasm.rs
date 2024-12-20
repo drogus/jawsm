@@ -39,6 +39,7 @@ pub fn generate_module() -> WatModule {
             data: mut CharArray,
             length: mut i32
         }
+        type StringArray = [mut Nullable<String>];
 
         struct StaticString {
             offset: i32,
@@ -61,6 +62,7 @@ pub fn generate_module() -> WatModule {
             value: mut anyref,
             flags: mut i32
         }
+        type PropertiesArray = [Nullable<Property>];
 
         struct PropertyMapEntry {
             key: mut i32,
@@ -1255,6 +1257,172 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, 103 as i31ref);
         }
 
+        fn get_propertymap(target: anyref) -> Nullable<PropertyMap> {
+            // TODO: as long as objects like Function and String are just another objects
+            // we will have to reimplement a lot of stuff like this. It would be great
+            // to research parent and child types
+             if ref_test!(target, Object) {
+                return (target as Object).properties;
+            } else if ref_test!(target, Function) {
+                return (target as Function).properties;
+            } else if ref_test!(target, Promise) {
+                return (target as Promise).properties;
+            } else if ref_test!(target, GlobalThis) {
+                return (target as GlobalThis).properties;
+            } else if ref_test!(target, Number) {
+                // numbers don't have their own properties, but use the Number prototype
+                return (global_number_prototype as Object).properties;
+            }
+
+            return null;
+        }
+
+        fn get_enumerable_property_names(target: anyref) -> StringArray {
+            let mut maybe_propertymap: Nullable<PropertyMap> = get_propertymap(target);
+            if ref_test!(maybe_propertymap, null) {
+                return [];
+            }
+
+            let propertymap: PropertyMap = maybe_propertymap as PropertyMap;
+            let mut i: i32 = 0;
+            let mut j: i32 = 0;
+            let entries: PropertyEntriesArray = propertymap.entries;
+            let mut length: i32 = len!(entries);
+            let mut entries_count: i32 = 0;
+            let mut property: Property;
+            let mut count: i32 = 0;
+            let mut maybe_propertymap_entry: Nullable<PropertyMapEntry>;
+            let mut propertymap_entry: PropertyMapEntry;
+
+            // TODO: I don't like it that we need to loop through properties twice. On the other
+            // hand if we wanted to loop only once, we might need to resize the array when getting
+            // more properties. For now I'm leaving it as is, but might be a good candidate for
+            // benchmarking and optimizing
+            while i < length {
+                maybe_propertymap_entry = entries[i];
+
+                if !ref_test!(maybe_propertymap_entry, null) {
+                    property = (maybe_propertymap_entry as PropertyMapEntry).value;
+                    if property.flags & PROPERTY_ENUMERABLE != 0 {
+                        count += 1;
+                    }
+                }
+                i += 1;
+            }
+
+            let own_prototype: anyref = get_own_prototype(target);
+            let mut proto_names: StringArray = [null; 0];
+            if ref_test!(own_prototype, null) {
+                proto_names = [null; 0];
+            } else {
+                proto_names = get_enumerable_property_names(own_prototype);
+                count += len!(proto_names);
+            }
+
+            let names: StringArray = [null; count];
+
+            i = 0;
+            while i < length {
+                maybe_propertymap_entry = entries[i];
+
+                if !ref_test!(maybe_propertymap_entry, null) {
+                    propertymap_entry = maybe_propertymap_entry as PropertyMapEntry;
+                    property = propertymap_entry.value;
+                    if property.flags & PROPERTY_ENUMERABLE != 0 {
+                        names[j] = get_property_name(propertymap, propertymap_entry.key);
+
+                        j += 1;
+                    }
+                }
+                i += 1;
+            }
+
+            i = 0;
+            length = len!(proto_names);
+            while i < length {
+                names[j] = proto_names[i];
+                i += 1;
+                j += 1;
+            }
+
+            return names;
+        }
+
+        fn get_property_name(propertymap: PropertyMap, key: i32) -> Nullable<String> {
+            if key < 0 {
+                return get_interned_string_by_key(propertymap.interner, key);                
+            }
+
+            return offset_to_string(key);
+        }
+
+        fn get_enumerable_values(target: anyref) -> AnyrefArray {
+            let mut maybe_propertymap: Nullable<PropertyMap> = get_propertymap(target);
+            if ref_test!(maybe_propertymap, null) {
+                return [];
+            }
+
+            let propertymap: PropertyMap = maybe_propertymap as PropertyMap;
+            let mut i: i32 = 0;
+            let mut j: i32 = 0;
+            let entries: PropertyEntriesArray = propertymap.entries;
+            let mut length: i32 = len!(entries);
+            let mut entries_count: i32 = 0;
+            let mut property: Property;
+            let mut count: i32 = 0;
+
+            // TODO: I don't like it that we need to loop through properties twice. On the other
+            // hand if we wanted to loop only once, we might need to resize the array when getting
+            // more properties. For now I'm leaving it as is, but might be a good candidate for
+            // benchmarking and optimizing
+            while i < length {
+                let maybe_propertymap_entry: Nullable<PropertyMapEntry> = entries[i];
+
+                if !ref_test!(maybe_propertymap_entry, null) {
+                    property = (maybe_propertymap_entry as PropertyMapEntry).value;
+                    if property.flags & PROPERTY_ENUMERABLE != 0 {
+                        count += 1;
+                    }
+                }
+                i += 1;
+            }
+
+            let own_prototype: anyref = get_own_prototype(target);
+            let mut proto_values: AnyrefArray = [null; 0];
+            if ref_test!(own_prototype, null) {
+                proto_values = [null; 0];
+            } else {
+                proto_values = get_enumerable_values(own_prototype);
+                count += len!(proto_values);
+            }
+
+            let values: AnyrefArray = [null; count];
+
+            i = 0;
+            while i < length {
+                let maybe_propertymap_entry: Nullable<PropertyMapEntry> = entries[i];
+
+                if !ref_test!(maybe_propertymap_entry, null) {
+                    property = (maybe_propertymap_entry as PropertyMapEntry).value;
+                    if property.flags & PROPERTY_ENUMERABLE != 0 {
+                        values[j] = property.value;
+                        j += 1;
+                    }
+                }
+                i += 1;
+            }
+
+            i = 0;
+            length = len!(proto_values);
+            while i < length {
+                values[j] = proto_values[i];
+                i += 1;
+                j += 1;
+            }
+
+            return values;
+        }
+
         fn get_property_str(target: anyref, name: anyref) -> Nullable<Property> {
             let offset: i32;
 
@@ -1400,44 +1568,15 @@ pub fn generate_module() -> WatModule {
             let property: Property;
             let global_this: GlobalThis;
 
-            // TODO: as long as objects like Function and String are just another objects
-            // we will have to reimplement a lot of stuff like this. It would be great
-            // to research parent and child types
-            if ref_test!(target, Object) {
-                object = target as Object;
-                result = propertymap_get(object.properties, name);
+            let properties: Nullable<PropertyMap> = get_propertymap(target);
+            let own_prototype: anyref = get_own_prototype(target);
+            if !ref_test!(properties, null) {
+                result = propertymap_get(properties as PropertyMap, name);
                 if ref_test!(result, null) {
-                    if !ref_test!(object.own_prototype, null) {
-                        result = get_property(object.own_prototype, name);
+                    if !ref_test!(own_prototype, null) {
+                        result = get_property(own_prototype, name);
                     }
                 }
-            } else if ref_test!(target, Function) {
-                function = target as Function;
-                result = propertymap_get(function.properties, name);
-                if ref_test!(result, null) {
-                    if !ref_test!(function.own_prototype, null) {
-                        result = get_property(function.own_prototype, name);
-                    }
-                }
-            } else if ref_test!(target, Promise) {
-                promise = target as Promise;
-                result = propertymap_get(promise.properties, name);
-                if ref_test!(result, null) {
-                    if !ref_test!(promise.own_prototype, null) {
-                        result = get_property(promise.own_prototype, name);
-                    }
-                }
-            } else if ref_test!(target, GlobalThis) {
-                global_this = target as GlobalThis;
-                result = propertymap_get(global_this.properties, name);
-                if ref_test!(result, null) {
-                    if !ref_test!(global_this.own_prototype, null) {
-                        result = get_property(global_this.own_prototype, name);
-                    }
-                }
-            } else if ref_test!(target, Number) {
-                // numbers don't have their own properties, but use the Number prototype
-                result = get_property(global_number_prototype, name);
             }
 
             if ref_test!(result, null) {
@@ -2083,13 +2222,19 @@ pub fn generate_module() -> WatModule {
             return 0 as i31ref;
         }
 
-        fn get_own_prototype(instance: anyref) -> Nullable<Object> {
-            if ref_test!(instance, Object) {
-                return (instance as Object).own_prototype as Object;
-            } else if ref_test!(instance, Promise) {
-                return (instance as Promise).own_prototype as Object;
-            } else if ref_test!(instance, Function) {
-                return (instance as Function).own_prototype as Object;
+        fn get_own_prototype(target: anyref) -> anyref {
+             if ref_test!(target, Object) {
+                return (target as Object).own_prototype;
+            } else if ref_test!(target, Function) {
+                return (target as Function).own_prototype;
+            } else if ref_test!(target, Promise) {
+                return (target as Promise).own_prototype;
+            } else if ref_test!(target, GlobalThis) {
+                return (target as GlobalThis).own_prototype;
+            } else if ref_test!(target, Number) {
+                // TODO: check if that's correct. do we have to handle global_number_prototype's
+                // own prototype?
+                return null;
             }
 
             return null;
@@ -2103,7 +2248,7 @@ pub fn generate_module() -> WatModule {
             let target_prototype_anyref: anyref = get_property(constructor, data!("prototype"));
             // is it possible to define a local of ref type and not assign anything right away?
             let mut target_prototype: Object = new_object();
-            let mut prototype: Nullable<Object> = null;
+            let mut prototype: anyref = null;
 
             if ref_test!(target_prototype_anyref, Object) {
                 target_prototype = target_prototype_anyref as Object;
