@@ -21,9 +21,9 @@ rescue Errno::ENOENT => e
 end
 
 count = first_results.inject(0) { |sum, r| sum + (r['result']['pass'] ? 1 : 0) }
-puts count
+puts "First: #{count}"
 count = second_results.inject(0) { |sum, r| sum + (r['result']['pass'] ? 1 : 0) }
-puts count
+puts "Second: #{count}"
 
 # Create lookup hash for second results
 second_lookup = second_results.each_with_object({}) do |result, hash|
