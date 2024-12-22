@@ -318,9 +318,11 @@ pub fn generate_module() -> WatModule {
                 throw!(JSException, create_string_from_array("TypeError: Object.defineProprty called on non-object"));
             }
 
-            let existing_property: Nullable<Property> = get_property_str(target, arguments[1]);
+            let existing_property: Nullable<Property> = get_own_property_str(target, arguments[1]);
             if !ref_test!(existing_property, null) {
-                throw!(JSException, create_string_from_array("TypeError: Cannot redefine property"));
+                if (existing_property as Property).flags & PROPERTY_CONFIGURABLE == 0 {
+                    throw!(JSException, create_string_from_array("TypeError: Cannot redefine non-reconfigurable property"));
+                }
             }
 
             let descriptor: Object = arguments[2] as Object;
@@ -1439,6 +1441,22 @@ pub fn generate_module() -> WatModule {
             return get_property(target, offset);
         }
 
+        fn get_own_property_str(target: anyref, name: anyref) -> Nullable<Property> {
+            let offset: i32;
+
+            if ref_test!(name, String) {
+                offset = get_data_offset_str((name as String).data);
+            } else if ref_test!(name, StaticString) {
+                offset = get_data_offset_static_str(name as StaticString);
+            } else {
+                // should we try to convert to string again?
+                // TODO: implement
+                return null as Nullable<Property>;
+            }
+
+            return get_own_property(target, offset);
+        }
+
         fn delete_property_str(target: anyref, name: anyref) {
             let offset: i32;
 
@@ -1557,6 +1575,32 @@ pub fn generate_module() -> WatModule {
                 data: data,
                 length: len!(data)
             };
+        }
+
+        fn get_own_property(target: anyref, name: i32) -> Nullable<Property> {
+            let mut result: Nullable<Property> = null;
+            let promise: Promise;
+            let function: Function;
+            let object: Object;
+            let property: Property;
+            let global_this: GlobalThis;
+
+            let properties: Nullable<PropertyMap> = get_propertymap(target);
+            if !ref_test!(properties, null) {
+                result = propertymap_get(properties as PropertyMap, name);
+            }
+
+            if ref_test!(result, null) {
+                return null as Nullable<Property>;
+            }
+
+            // at this point the result has to be a property
+            let property = result as Property;
+            if ref_test!(property.value, Function) {
+                (property.value as Function).this = target;
+            }
+
+            return result;
         }
 
         // TODO: this should also handle prototypes
