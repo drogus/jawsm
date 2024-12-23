@@ -299,29 +299,40 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
+        fn create_error(constructor_offset: i32, message: String) -> Object {
+            let constructor: Function = get_variable(global_scope as Scope, constructor_offset) as Function;
+            let new_instance: Object = new_object();
+            call_function(constructor, new_instance, create_arguments_1(message));
+
+            new_instance.own_prototype = get_property_value(constructor, data!("prototype"));
+            set_property_value(new_instance, data!("constructor"), constructor);
+
+            return new_instance;
+        }
+
         fn Object_defineProperty(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let args_len: i32 = len!(arguments);
 
             if args_len == 0 {
-                throw!(JSException, create_string_from_array("TypeError: Objct.defineProperty called on non-object"));
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Object.defineProperty called on non-object")));
             }
 
             if args_len < 3 {
-                throw!(JSException, create_string_from_array("TypeError: Property descriptor must be an object"));
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Property descriptor must be an object")));
             } else if !ref_test!(arguments[2], Object) {
-                throw!(JSException, create_string_from_array("TypeError: Property descriptor must be an object"));
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Property descriptor must be an object")));
             }
 
             let target: anyref = arguments[0];
 
             if is_primitive(target) {
-                throw!(JSException, create_string_from_array("TypeError: Object.defineProprty called on non-object"));
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Object.defineProprty called on non-object")));
             }
 
             let existing_property: Nullable<Property> = get_own_property_str(target, arguments[1]);
             if !ref_test!(existing_property, null) {
                 if (existing_property as Property).flags & PROPERTY_CONFIGURABLE == 0 {
-                    throw!(JSException, create_string_from_array("TypeError: Cannot redefine non-reconfigurable property"));
+                    throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Cannot redefine non-reconfigurable property")));
                 }
             }
 
@@ -332,7 +343,7 @@ pub fn generate_module() -> WatModule {
             if (!ref_test!(get_property(descriptor, data!("writable")), null) ||
                 !ref_test!(get_property(descriptor, data!("value")), null)) &&
                 get_or_set {
-                throw!(JSException, create_string_from_array("TypeError: Invalid property descriptor. Cannot both specify accessors and a value or writable attribute"));
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Invalid property descriptor. Cannot both specify accessors and a value or writable attribute")));
             }
 
             let value: anyref = null;
@@ -344,10 +355,10 @@ pub fn generate_module() -> WatModule {
 
                 // if either a getter or a setter are not undefined and are not a function raise an error
                 if !ref_test!(getter, null) && !ref_test!(getter, Function) {
-                    throw!(JSException, create_string_from_array("TypeError: Getter must be a function"));
+                    throw!(JSException, create_error(data!("TypeError"), create_string_from_array("getter must be a function")));
                 }
                 if !ref_test!(setter, null) && !ref_test!(setter, Function) {
-                    throw!(JSException, create_string_from_array("TypeError: Setter must be a function"));
+                    throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Setter must be a function")));
                 }
 
                 let accessor: AccessorMethod = AccessorMethod { get: null, set: null };
@@ -409,9 +420,60 @@ pub fn generate_module() -> WatModule {
             return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref);
         }
 
+        fn is_object(value: anyref) -> i32 {
+            if ref_test!(value, Object) || ref_test!(value, Promise) {
+                return 1;
+            }
+
+            return 0;
+        }
+
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            // this is wrong, but for now I need to have anything that works
+            if len!(arguments) > 0 {
+                if is_null_or_undefined(arguments[1]) {
+                    return new_object();
+                } else if is_object(arguments[1]) {
+                    return arguments[1];
+                } else {
+                    // TODO: Implement
+                    throw!(JSException, create_string_from_array("Object constructor - a non object argument: not implemented"));
+                }
+            }
+
             return new_object();
+        }
+
+        fn Error_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: here we should also handle a case when Error constructor is called without new
+            let message: anyref = null;
+            if len!(arguments) > 0 {
+                message = arguments[0];
+            }
+            // let new_instance: Object = new_object();
+            set_property_value(this, data!("message"), message);
+            set_property_value(this, data!("name"), new_static_string(data!("Error"), 5));
+
+            return this;
+        }
+
+        fn ReferenceError_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let message: anyref = null;
+            if len!(arguments) > 0 {
+                Error_constructor(scope, this, arguments);
+            }
+            set_property_value(this, data!("name"), new_static_string(data!("ReferenceError"), 14));
+
+            return this;
+        }
+
+        fn TypeError_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let message: anyref = null;
+            if len!(arguments) > 0 {
+                Error_constructor(scope, this, arguments);
+            }
+            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 9));
+
+            return this;
         }
 
         fn create_function_prototype() -> Object {
@@ -2119,6 +2181,7 @@ pub fn generate_module() -> WatModule {
             let char_array1: CharArray;
             let char_array2: CharArray;
             let offset: i32;
+            let result: i32;
 
             if ref_test!(arg1, null) && ref_test!(arg2, null) {
                 return 1 as i31ref;
@@ -2207,6 +2270,11 @@ pub fn generate_module() -> WatModule {
                 }
 
                 return 1 as i31ref;
+            }
+
+            if ref_test!(arg1, Function) && ref_test!(arg2, Function) {
+                result = arg1 as Function == arg2 as Function;
+                return result as i31ref;
             }
 
             return 0 as i31ref;
@@ -2970,12 +3038,30 @@ pub fn generate_module() -> WatModule {
 
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
+            let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
+            let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
+            let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
 
             set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
             set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
 
+            let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype)) as Object;
+            set_property_value(error_prototype, data!("constructor"), error_constructor);
+            set_property_value(error_constructor, data!("prototype"), error_prototype);
+
+            let reference_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype)) as Object;
+            set_property_value(reference_error_prototype, data!("constructor"), reference_error_constructor);
+            set_property_value(reference_error_constructor, data!("prototype"), reference_error_prototype);
+
+            let type_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype)) as Object;
+            set_property_value(type_error_prototype, data!("constructor"), type_error_constructor);
+            set_property_value(type_error_constructor, data!("prototype"), type_error_prototype);
+
             declare_variable(global_scope as Scope, data!("Promise"), promise_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("Error"), error_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("ReferenceError"), reference_error_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("TypeError"), type_error_constructor, VARIABLE_CONST);
 
             setup_object_constructor(object_constructor);
 

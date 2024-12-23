@@ -1121,8 +1121,6 @@ impl WasmTranslator {
             WasmType::Ref("$Function".to_string(), Nullable::False),
         );
 
-        let mut result = vec![W::call("$new_object"), W::local_set(&new_instance)];
-
         let prototype_instructions = vec![
             W::ref_cast(WasmType::Ref("$Function".to_string(), Nullable::False)),
             W::local_tee(&constructor),
@@ -1132,13 +1130,16 @@ impl WasmTranslator {
             W::call("$get_value_of_property"),
             W::local_set(&prototype_local),
         ];
-        result.append(&mut self.translate_call(
-            new.call(),
-            W::local_get(&new_instance),
-            Some(prototype_instructions),
-            true,
-        ));
-        result.append(&mut vec![
+
+        vec![
+            W::call("$new_object"),
+            W::local_set(&new_instance),
+            ..self.translate_call(
+                new.call(),
+                W::local_get(&new_instance),
+                Some(prototype_instructions),
+                true,
+            ),
             W::local_get(&new_instance),
             W::local_get(&prototype_local),
             W::local_get(&constructor),
@@ -1148,9 +1149,7 @@ impl WasmTranslator {
             // W::local_get(&prototype_local),
             // W::struct_set("$Object", "$prototype"),
             //
-        ]);
-
-        result
+        ]
     }
 
     fn translate_arrow_function(&mut self, function: &ArrowFunction) -> InstructionsList {
