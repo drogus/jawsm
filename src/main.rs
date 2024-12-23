@@ -233,15 +233,26 @@ impl WasmTranslator {
                 boa_ast::declaration::Binding::Identifier(identifier) => {
                     let offset = self.add_identifier(identifier);
                     self.current_function().add_instructions(vec![
-                        W::local_get("$scope"),
-                        W::i32_const(offset),
-                        W::local_get("$arguments"),
                         W::i32_const(i as i32),
-                        W::array_get("$JSArgs"),
-                        W::i32_const(VarType::Param.to_i32()),
+                        W::local_get("$arguments"),
+                        W::ArrayLen,
+                        W::I32LtS,
+                        W::r#if(vec![
+                            W::local_get("$scope"),
+                            W::i32_const(offset),
+                            W::local_get("$arguments"),
+                            W::i32_const(i as i32),
+                            W::array_get("$JSArgs"),
+                            W::i32_const(VarType::Param.to_i32()),
+                            W::call("$declare_variable")
+                        ], Some(vec![
+                            W::local_get("$scope"),
+                            W::i32_const(offset),
+                            W::ref_null_any(),
+                            W::i32_const(VarType::Param.to_i32()),
+                            W::call("$declare_variable")
+                        ]))
                     ]);
-                    self.current_function()
-                        .add_instruction(W::call("$declare_variable"));
                 }
                 boa_ast::declaration::Binding::Pattern(_pattern) => todo!(),
             }
