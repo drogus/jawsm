@@ -1490,15 +1490,8 @@ pub fn generate_module() -> WatModule {
         fn get_property_str(target: anyref, name: anyref) -> Nullable<Property> {
             let offset: i32;
 
-            if ref_test!(name, String) {
-                offset = get_data_offset_str((name as String).data);
-            } else if ref_test!(name, StaticString) {
-                offset = get_data_offset_static_str(name as StaticString);
-            } else {
-                // should we try to convert to string again?
-                // TODO: implement
-                return null as Nullable<Property>;
-            }
+            let name_str: String = to_string(name);
+            let offset: i32 = get_data_offset_str(name_str.data);
 
             return get_property(target, offset);
         }
@@ -1563,6 +1556,57 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn to_string(value: anyref) -> String {
+            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+            if ref_test!(value, null) {
+                // TODO: it would be better to return a static string here, but at the moment
+                //       I don't really have a good way to return "some string". maybe I'll just
+                //       return anyref from this function?
+                return create_string_from_array("undefined");
+            } else if is_primitive(value) {
+                if ref_test!(value, Number) {
+                    return number_to_string_raw(value as Number);
+                } else if ref_test!(value, String) {
+                    return value as String;
+                } else if ref_test!(value, StaticString) {
+                    return convert_static_string_to_string(value as StaticString);
+                } else if ref_test!(value, i31ref) {
+                    let v: i32 = value as i31ref as i32;
+
+                    if v == 0 {
+                        return create_string_from_array("false");
+                    } else if v == 1 {
+                        return create_string_from_array("true");
+                    } else if v == 2 {
+                        return create_string_from_array("null");
+                    }
+                }
+            } else {
+                let maybe_to_string: Nullable<Property> =
+                    get_property_str(value, create_string_from_array("toString"));
+
+                if ref_test!(maybe_to_string, null) {
+                    // we can't convert to string
+                    throw!(JSException, error);
+                } else {
+                    let to_string_prop: Property = maybe_to_string as Property;
+                    if ref_test!(to_string_prop.value, Function) {
+                        let result: anyref = call_function(to_string_prop.value as Function, value, create_arguments_0());
+                        if is_primitive(result) {
+                            return to_string(result);
+                        } else {
+                            throw!(JSException, error);
+                        }
+                    } else {
+                        // toString is not a function, error out
+                        throw!(JSException, error);
+                    }
+                }
+            }
+
+            throw!(JSException, create_error(data!("Error"), create_string_from_array("not implemented, converting to string")));
+        }
+
         fn set_property_value_str(target: anyref, name: anyref, value: anyref) {
             // TODO: this code is almost the same as set_property_str. We should
             // extract the code that fetches an offset to a separate function
@@ -1583,32 +1627,8 @@ pub fn generate_module() -> WatModule {
                     name_str = convert_static_string_to_string(name as StaticString);
                 }
             } else {
-                let maybe_to_string: Nullable<Property> =
-                    get_property_str(name, create_string_from_array("toString"));
-                if ref_test!(maybe_to_string, null) {
-                    // we can't convert to string
-                    throw!(JSException, create_string_from_array("Can't convert property name to string"));
-                } else {
-                    let to_string: Property = maybe_to_string as Property;
-                    if ref_test!(to_string.value, Function) {
-                        let result: anyref = call_function(to_string.value as Function, target, create_arguments_0());
-                        if ref_test!(result, String) {
-                            name_str = result as String;
-                            offset = get_data_offset_str(name_str.data);
-                        } else if ref_test!(result, StaticString) {
-                            offset = get_data_offset_static_str(result as StaticString);
-                            if offset == 0 {
-                                name_str = convert_static_string_to_string(result as StaticString);
-                            }
-                        } else {
-                            name_str = convert_to_string(result);
-                            offset = get_data_offset_str(name_str.data);
-                        }
-                    } else {
-                        // toString is not a function, error out
-                        throw!(JSException, create_string_from_array("toString is not a function"));
-                    }
-                }
+                name_str = to_string(name);
+                offset = get_data_offset_str(name_str.data);
             }
 
             if offset == 0 {
@@ -2169,6 +2189,16 @@ pub fn generate_module() -> WatModule {
 
         fn strict_not_equal(arg1: anyref, arg2: anyref) -> i31ref {
             return !strict_equal(arg1, arg2);
+        }
+
+        fn operator_in(arg1: anyref, arg2: anyref) -> i31ref {
+            let property: Nullable<Property> = get_property_str(arg2, arg1);
+
+            if ref_test!(property, null) {
+                return 0 as i31ref;
+            }
+
+            return 1 as i31ref;
         }
 
         fn strict_equal(arg1: anyref, arg2: anyref) -> i31ref {
@@ -2852,31 +2882,31 @@ pub fn generate_module() -> WatModule {
             return new_number(1);
         }
 
-        fn to_string(target: anyref) -> String {
-            let static_str: StaticString;
-            let result: anyref;
-            if ref_test!(target, String) {
-                return target as String;
-            } else if ref_test!(target, StaticString) {
-                static_str = target as StaticString;
-                // If we only return static strings for stuff that is in memory, maybe
-                // we could use it directly for fetching props
-                return memory_to_string(static_str.offset, static_str.length);
-            }
-
-            // TODO: handle the case where we don't get anything
-            let to_string_func: Function = (get_property(target, data!("toString")) as Property).value as Function;
-            // TODO: handle a case when toString does not return a String
-            let result = call_function(to_string_func, target, create_arguments_0());
-
-            if ref_test!(result, StaticString) {
-                return memory_to_string((result as StaticString).offset, (result as StaticString).length);
-            } else if ref_test!(result, String) {
-                return result as String;
-            }
-
-            throw!(JSException, 2222222 as i31ref);
-        }
+        // fn to_string(target: anyref) -> String {
+        //     let static_str: StaticString;
+        //     let result: anyref;
+        //     if ref_test!(target, String) {
+        //         return target as String;
+        //     } else if ref_test!(target, StaticString) {
+        //         static_str = target as StaticString;
+        //         // If we only return static strings for stuff that is in memory, maybe
+        //         // we could use it directly for fetching props
+        //         return memory_to_string(static_str.offset, static_str.length);
+        //     }
+        //
+        //     // TODO: handle the case where we don't get anything
+        //     let to_string_func: Function = (get_property(target, data!("toString")) as Property).value as Function;
+        //     // TODO: handle a case when toString does not return a String
+        //     let result = call_function(to_string_func, target, create_arguments_0());
+        //
+        //     if ref_test!(result, StaticString) {
+        //         return memory_to_string((result as StaticString).offset, (result as StaticString).length);
+        //     } else if ref_test!(result, String) {
+        //         return result as String;
+        //     }
+        //
+        //     throw!(JSException, 2222222 as i31ref);
+        // }
 
         fn offset_to_string(target_offset: i32) -> Nullable<String> {
             let mut offset: i32 = data_offsets_offset;

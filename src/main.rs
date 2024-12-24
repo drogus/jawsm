@@ -513,7 +513,7 @@ impl WasmTranslator {
                     RelationalOp::GreaterThanOrEqual => "$greater_than_or_equal",
                     RelationalOp::LessThan => "$less_than",
                     RelationalOp::LessThanOrEqual => "$less_than_or_equal",
-                    RelationalOp::In => todo!(),
+                    RelationalOp::In => "$operator_in",
                     RelationalOp::InstanceOf => "$instance_of",
                 };
                 let rhs = self.current_function().add_local("$rhs", WasmType::Anyref);
@@ -540,19 +540,22 @@ impl WasmTranslator {
                 let rhs = self.current_function().add_local("$rhs", WasmType::Anyref);
                 let lhs = self.current_function().add_local("$lhs", WasmType::Anyref);
 
-                let mut result = vec![];
-                result.append(&mut self.translate_expression(binary.lhs(), true));
-                result.push(W::local_set(&lhs));
-                result.append(&mut self.translate_expression(binary.rhs(), true));
-                result.append(&mut vec![
-                    W::local_set(&rhs),
-                    W::local_get(&lhs),
-                    W::local_get(&rhs),
-                    W::call(func_name),
-                ]);
-                result
+                vec![
+                  ..self.translate_expression(binary.lhs(), true),
+                  W::local_set(&lhs),
+                  ..self.translate_expression(binary.rhs(), true),
+                  W::local_set(&rhs),
+                  W::local_get(&lhs),
+                  W::local_get(&rhs),
+                  W::call(func_name),
+                ]
             }
-            BinaryOp::Comma => todo!(),
+            BinaryOp::Comma => {
+                vec![
+                  ..self.translate_expression(binary.lhs(), false),
+                  ..self.translate_expression(binary.rhs(), true),
+                ]
+            },
         }
     }
 
