@@ -4,7 +4,10 @@ use boa_ast::{
     expression::{
         self,
         access::PropertyAccess,
-        literal::{ArrayLiteral, Literal, ObjectLiteral, TemplateElement, TemplateLiteral},
+        literal::{
+            ArrayLiteral, Literal, ObjectLiteral, ObjectMethodDefinition, PropertyDefinition,
+            TemplateElement, TemplateLiteral,
+        },
         operator::{
             binary::{ArithmeticOp, BinaryOp, LogicalOp},
             update::UpdateTarget,
@@ -13,9 +16,12 @@ use boa_ast::{
         Await, Call, Expression, Identifier, New, Parenthesized,
     },
     function::{
-        ArrowFunction, AsyncFunction, Class, FormalParameter, FormalParameterList, Function,
-        FunctionBody,
+        ArrowFunction, AsyncFunctionDeclaration, AsyncFunctionExpression, ClassDeclaration,
+        ClassElement, ClassExpression, FormalParameter, FormalParameterList, FunctionBody,
+        FunctionDeclaration, FunctionExpression,
     },
+    property::PropertyName,
+    scope::Scope,
     statement::{
         Block, Case, Catch, DoWhileLoop, ErrorHandler, Finally, ForInLoop, ForLoop, ForOfLoop, If,
         Return, Statement, Switch, Throw, Try, WhileLoop, With,
@@ -262,7 +268,7 @@ impl WasmTranslator {
             }
         }
 
-        for statement in body.statements().statements() {
+        for statement in body.statements() {
             match statement {
                 boa_ast::StatementListItem::Statement(statement) => {
                     let res = self.translate_statement(statement);
@@ -291,16 +297,30 @@ impl WasmTranslator {
         ]
     }
 
-    fn translate_function(&mut self, fun: &Function) -> InstructionsList {
+    fn translate_function(&mut self, fun: &FunctionExpression) -> InstructionsList {
         self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
     }
 
-    fn translate_get_function(&mut self, fun: &Function) -> InstructionsList {
-        self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
+    fn translate_get_function(&mut self, fun: &ObjectMethodDefinition) -> InstructionsList {
+        match fun.name() {
+            PropertyName::Literal(sym) => self.translate_function_generic(
+                Some(Identifier::new(sym.clone())),
+                fun.parameters(),
+                fun.body(),
+            ),
+            PropertyName::Computed(_) => todo!(),
+        }
     }
 
-    fn translate_set_function(&mut self, fun: &Function) -> InstructionsList {
-        self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
+    fn translate_set_function(&mut self, fun: &ObjectMethodDefinition) -> InstructionsList {
+        match fun.name() {
+            PropertyName::Literal(sym) => self.translate_function_generic(
+                Some(Identifier::new(sym.clone())),
+                fun.parameters(),
+                fun.body(),
+            ),
+            PropertyName::Computed(_) => todo!(),
+        }
     }
 
     fn translate_lexical(&mut self, decl: &LexicalDeclaration) -> InstructionsList {
@@ -677,17 +697,27 @@ impl WasmTranslator {
                 self.translate_object_literal(object_literal, will_use_return)
             }
             Expression::Spread(_spread) => todo!(),
-            Expression::Function(function) => self.translate_function(function),
+            Expression::FunctionExpression(function) => self.translate_function(function),
             Expression::ArrowFunction(arrow_function) => {
                 self.translate_arrow_function(arrow_function)
             }
             Expression::AsyncArrowFunction(_async_arrow_function) => todo!(),
-            Expression::Generator(_generator) => todo!(),
-            Expression::AsyncFunction(async_function) => {
-                self.translate_async_function(async_function)
+            Expression::GeneratorExpression(_generator) => todo!(),
+            Expression::AsyncFunctionExpression(f) => {
+                self.translate_async_function(f.name(), f.parameters(), f.body())
             }
-            Expression::AsyncGenerator(_async_generator) => todo!(),
-            Expression::Class(class) => self.translate_class(class, will_use_return),
+            Expression::AsyncGeneratorExpression(_async_generator) => todo!(),
+            Expression::ClassExpression(class) => {
+                todo!();
+
+                self.translate_class(
+                    class.name(),
+                    class.super_ref(),
+                    class.constructor(),
+                    class.elements(),
+                    will_use_return,
+                )
+            }
             Expression::TemplateLiteral(template_literal) => {
                 self.translate_template_literal(template_literal)
             }
@@ -718,13 +748,17 @@ impl WasmTranslator {
         }
     }
 
-    fn translate_class(&mut self, class: &Class, will_use_return: bool) -> InstructionsList {
-        let constructor_instructions = if let Some(constructor) = class.constructor() {
-            let function_instructions = self.translate_function_generic(
-                class.name(),
-                constructor.parameters(),
-                constructor.body(),
-            );
+    fn translate_class(
+        &mut self,
+        name: Option<Identifier>,
+        super_ref: Option<&Expression>,
+        constructor: Option<&FunctionExpression>,
+        elements: &[ClassElement],
+        will_use_return: bool,
+    ) -> InstructionsList {
+        let constructor_instructions = if let Some(constructor) = constructor {
+            let function_instructions =
+                self.translate_function_generic(name, constructor.parameters(), constructor.body());
 
             // At the moment `translate_function_generic` doesn't allow to easily get the last
             // function. Here we rely on an implementation detail, ie. that the last function is
@@ -937,10 +971,10 @@ impl WasmTranslator {
         }
     }
 
-    fn transform_function_body(&mut self, body: &Script) -> Script {
+    fn transform_function_body(&mut self, body: &FunctionBody) -> FunctionBody {
         let mut new_statements = Vec::new();
 
-        for statement in body.statements().statements() {
+        for statement in body.statements() {
             match statement {
                 StatementListItem::Statement(stmt) => {
                     new_statements.push(StatementListItem::Statement(
@@ -963,10 +997,15 @@ impl WasmTranslator {
             )),
         )));
 
-        Script::new(StatementList::new(new_statements, true))
+        FunctionBody::new(new_statements, true)
     }
 
-    fn translate_async_function(&mut self, async_function: &AsyncFunction) -> InstructionsList {
+    fn translate_async_function(
+        &mut self,
+        name: Option<Identifier>,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+    ) -> InstructionsList {
         use boa_ast::declaration::Variable;
         use boa_ast::expression::Identifier;
 
@@ -989,13 +1028,14 @@ impl WasmTranslator {
         ]);
 
         // Transform the original function body
-        let transformed_body = self.transform_function_body(async_function.body());
+        let transformed_body = self.transform_function_body(body);
 
         // Create the callback function
-        let callback_function = Function::new(None, callback_params, transformed_body);
+        let callback_function =
+            FunctionExpression::new(None, callback_params, transformed_body, false);
 
         // Create the Promise constructor call
-        let promise_function = Expression::Function(callback_function);
+        let promise_function = Expression::FunctionExpression(callback_function);
         let promise_new = Expression::New(
             Call::new(
                 Expression::Identifier(Identifier::new(
@@ -1007,15 +1047,16 @@ impl WasmTranslator {
         );
 
         // Create the outer function that returns the promise
-        let outer_function = Function::new(
-            async_function.name(),
-            async_function.parameters().clone(),
-            Script::new(StatementList::new(
+        let outer_function = FunctionExpression::new(
+            name,
+            params.clone(),
+            FunctionBody::new(
                 vec![StatementListItem::Statement(Statement::Return(
                     Return::new(Some(promise_new)),
                 ))],
                 true,
-            )),
+            ),
+            true,
         );
 
         // println!("{}", outer_function.to_interned_string(&self.interner));
@@ -1084,8 +1125,6 @@ impl WasmTranslator {
         object_literal: &ObjectLiteral,
         will_use_return: bool,
     ) -> InstructionsList {
-        use boa_ast::property::{PropertyDefinition, PropertyName};
-
         let mut instructions = Vec::new();
         let new_instance = self.current_function().add_local(
             "$new_instance",
@@ -1134,52 +1173,67 @@ impl WasmTranslator {
                         instructions
                     }
                 },
-                PropertyDefinition::MethodDefinition(property_name, method_definition) => {
-                    match property_name {
-                        PropertyName::Literal(sym) => {
-                            let mut offset = self.add_symbol(*sym);
-                            let func_instr = match method_definition {
-                                boa_ast::property::MethodDefinition::Get(function) => {
-                                    let mut instructions = self.translate_get_function(function);
-                                    instructions.push(W::local_get(&new_instance));
-                                    instructions.push(W::i32_const(offset));
-                                    instructions.push(W::call("$create_get_property"));
-                                    instructions
+                PropertyDefinition::MethodDefinition(method_definition) => match property {
+                    PropertyDefinition::IdentifierReference(identifier) => {
+                        let sym = identifier.sym();
+                        let mut offset = self.add_symbol(sym);
+                        let func_instr = match method_definition.kind() {
+                            boa_ast::property::MethodDefinitionKind::Get => {
+                                let mut instructions =
+                                    self.translate_get_function(method_definition);
+                                instructions.push(W::local_get(&new_instance));
+                                instructions.push(W::i32_const(offset));
+                                instructions.push(W::call("$create_get_property"));
+                                instructions
+                            }
+                            boa_ast::property::MethodDefinitionKind::Set => {
+                                let mut instructions =
+                                    self.translate_set_function(method_definition);
+                                instructions.push(W::local_get(&new_instance));
+                                instructions.push(W::i32_const(offset));
+                                instructions.push(W::call("$create_set_property"));
+                                instructions
+                            }
+                            boa_ast::property::MethodDefinitionKind::Ordinary => {
+                                match method_definition.name() {
+                                    PropertyName::Literal(sym) => {
+                                        let mut instructions = self.translate_function_generic(
+                                            Some(Identifier::new(sym.clone())),
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        );
+                                        instructions.push(W::call("$create_property"));
+                                        instructions
+                                    }
+                                    PropertyName::Computed(_) => todo!(),
                                 }
-                                boa_ast::property::MethodDefinition::Set(function) => {
-                                    let mut instructions = self.translate_set_function(function);
-                                    instructions.push(W::local_get(&new_instance));
-                                    instructions.push(W::i32_const(offset));
-                                    instructions.push(W::call("$create_set_property"));
-                                    instructions
-                                }
-                                boa_ast::property::MethodDefinition::Ordinary(function) => {
-                                    let mut instructions = self.translate_function(function);
-                                    instructions.push(W::call("$create_property"));
-                                    instructions
-                                }
-                                boa_ast::property::MethodDefinition::Generator(_) => todo!(),
-                                boa_ast::property::MethodDefinition::AsyncGenerator(_) => todo!(),
-                                boa_ast::property::MethodDefinition::Async(_) => todo!(),
-                            };
+                            }
+                            boa_ast::property::MethodDefinitionKind::Generator => todo!(),
+                            boa_ast::property::MethodDefinitionKind::AsyncGenerator => {
+                                todo!()
+                            }
+                            boa_ast::property::MethodDefinitionKind::Async => todo!(),
+                        };
 
-                            let temp_prop = self.current_function().add_local(
-                                "$temp_prop",
-                                WasmType::Ref("$Property".to_string(), Nullable::False),
-                            );
-                            let mut result = func_instr;
-                            result.append(&mut vec![
-                                W::local_set(&temp_prop),
-                                W::local_get(&new_instance),
-                                W::i32_const(offset),
-                                W::local_get(&temp_prop),
-                                W::call("$set_property"),
-                            ]);
-                            result
-                        }
-                        PropertyName::Computed(_) => todo!(),
+                        let temp_prop = self.current_function().add_local(
+                            "$temp_prop",
+                            WasmType::Ref("$Property".to_string(), Nullable::False),
+                        );
+                        let mut result = func_instr;
+                        result.append(&mut vec![
+                            W::local_set(&temp_prop),
+                            W::local_get(&new_instance),
+                            W::i32_const(offset),
+                            W::local_get(&temp_prop),
+                            W::call("$set_property"),
+                        ]);
+                        result
                     }
-                }
+                    PropertyDefinition::Property(_, _) => todo!(),
+                    PropertyDefinition::MethodDefinition(_) => todo!(),
+                    PropertyDefinition::SpreadObject(_) => todo!(),
+                    PropertyDefinition::CoverInitializedName(_, _) => todo!(),
+                },
                 PropertyDefinition::SpreadObject(_) => todo!(),
                 PropertyDefinition::CoverInitializedName(_, _) => todo!(),
             };
@@ -1457,44 +1511,51 @@ impl WasmTranslator {
         //     declaration.to_interned_string(&self.interner)
         // );
         match declaration {
-            Declaration::Function(decl) => {
-                let mut declaration = self.translate_function(decl);
+            Declaration::FunctionDeclaration(decl) => {
+                let mut declaration = self.translate_function_generic(
+                    Some(decl.name()),
+                    decl.parameters(),
+                    decl.body(),
+                );
                 // function declaration still needs to be added to the scope if function has a name
                 // TODO: declared functions need to be hoisted
-                if let Some(name) = decl.name() {
-                    let offset = self.add_identifier(&name);
-                    let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
-                    result.append(&mut declaration);
-                    result.append(&mut vec![
-                        W::i32_const(VarType::Var.to_i32()),
-                        W::call("$declare_variable".to_string()),
-                    ]);
-                    result
-                } else {
-                    // TODO: if it's empty and not called right away I guess we can just ignore it?
-                    declaration
-                }
+                let offset = self.add_identifier(&decl.name());
+                let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
+                result.append(&mut declaration);
+                result.append(&mut vec![
+                    W::i32_const(VarType::Var.to_i32()),
+                    W::call("$declare_variable".to_string()),
+                ]);
+                result
             }
             Declaration::Lexical(v) => self.translate_lexical(v),
-            Declaration::Generator(_generator) => todo!(),
-            Declaration::AsyncFunction(decl) => {
-                let mut declaration = self.translate_async_function(decl);
-                if let Some(name) = decl.name() {
-                    let offset = self.add_identifier(&name);
-                    let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
-                    result.append(&mut declaration);
-                    result.append(&mut vec![
-                        W::i32_const(VarType::Var.to_i32()),
-                        W::call("$declare_variable".to_string()),
-                    ]);
-                    result
-                } else {
-                    // TODO: if it's empty and not called right away I guess we can just ignore it?
-                    declaration
-                }
+            Declaration::GeneratorDeclaration(_generator) => todo!(),
+            Declaration::AsyncFunctionDeclaration(decl) => {
+                let mut declaration = self.translate_async_function(
+                    Some(decl.name()),
+                    decl.parameters(),
+                    decl.body(),
+                );
+                let offset = self.add_identifier(&decl.name());
+                let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
+                result.append(&mut declaration);
+                result.append(&mut vec![
+                    W::i32_const(VarType::Var.to_i32()),
+                    W::call("$declare_variable".to_string()),
+                ]);
+                result
             }
-            Declaration::AsyncGenerator(_async_generator) => todo!(),
-            Declaration::Class(class) => self.translate_class(class, false),
+            Declaration::AsyncGeneratorDeclaration(_async_generator) => todo!(),
+            Declaration::ClassDeclaration(class) => {
+                todo!();
+                self.translate_class(
+                    Some(class.name()),
+                    class.super_ref(),
+                    class.constructor(),
+                    class.elements(),
+                    false,
+                )
+            }
         }
     }
 
@@ -1647,7 +1708,7 @@ impl WasmTranslator {
             Some(init) => match init {
                 ForLoopInitializer::Expression(expr) => self.translate_expression(expr, true),
                 ForLoopInitializer::Var(decl) => self.translate_var(decl),
-                ForLoopInitializer::Lexical(decl) => self.translate_lexical(decl),
+                ForLoopInitializer::Lexical(decl) => self.translate_lexical(decl.declaration()),
             },
             None => vec![],
         };
@@ -2012,7 +2073,7 @@ fn main() -> anyhow::Result<()> {
     let mut interner = Interner::default();
 
     let mut parser = Parser::new(Source::from_bytes(&full));
-    let ast = match parser.parse_script(&mut interner) {
+    let ast = match parser.parse_script(&Scope::default(), &mut interner) {
         Ok(ast) => ast,
         Err(e) => {
             eprintln!("SyntaxError: {e}");

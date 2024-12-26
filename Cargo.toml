@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-boa_ast = "0.19"
-boa_parser = "0.19"
+boa_ast = "0.20"
+boa_parser = "0.20"
 walrus = "0.22"
-boa_interner = "0.19"
+boa_interner = "0.20"
 rand = "0.8.5"
 tinytemplate = "1.1"
 serde = { version = "1.0", features = ["derive"] }
