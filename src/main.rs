@@ -127,6 +127,13 @@ impl WasmTranslator {
         }
     }
 
+    fn private_field_offset(&mut self, offset: i32) -> i32 {
+        // private fields are interned with the same symbols as non private fields
+        // I don't want to create special maps for private fields, though, so I will use
+        // regular offsets. As offsets are i32 numbers, we can use part of the offset as
+        // we won't likely need the entire space
+        1_000_000_000 + offset
+    }
     fn add_new_symbol(&mut self, sym: Sym, value: &str) -> i32 {
         if let Some(offset) = self.identifiers_map.get(&(sym.get() as i32)) {
             *offset
@@ -659,7 +666,33 @@ impl WasmTranslator {
                     }
                 }
             }
-            PropertyAccess::Private(_private_property_access) => todo!(),
+            PropertyAccess::Private(private_property_access) => {
+                let mut target = self.translate_expression(private_property_access.target(), true);
+                let offset = self.add_symbol(private_property_access.field().description());
+                let temp = self.current_function().add_local("$temp", WasmType::Anyref);
+
+                if let Some(mut assign_instructions) = assign {
+                    let mut result = vec![];
+                    result.append(&mut assign_instructions);
+                    result.push(W::local_set(&temp));
+                    result.append(&mut target);
+                    result.append(&mut vec![
+                        W::i32_const(self.private_field_offset(offset)),
+                        W::local_get(&temp),
+                        W::call("$set_property_value"),
+                    ]);
+                    result
+                } else {
+                    target.append(&mut vec![
+                        W::local_tee(&temp),
+                        W::i32_const(self.private_field_offset(offset)),
+                        W::call("$get_property"),
+                        W::local_get(&temp),
+                        W::call("$get_value_of_property"),
+                    ]);
+                    target
+                }
+            }
             PropertyAccess::Super(_super_property_access) => todo!(),
         }
     }
@@ -703,17 +736,13 @@ impl WasmTranslator {
                 self.translate_async_function(f.name(), f.parameters(), f.body())
             }
             Expression::AsyncGeneratorExpression(_async_generator) => todo!(),
-            Expression::ClassExpression(class) => {
-                todo!();
-
-                self.translate_class(
-                    class.name(),
-                    class.super_ref(),
-                    class.constructor(),
-                    class.elements(),
-                    will_use_return,
-                )
-            }
+            Expression::ClassExpression(class) => self.translate_class(
+                class.name(),
+                class.super_ref(),
+                class.constructor(),
+                class.elements(),
+                will_use_return,
+            ),
             Expression::TemplateLiteral(template_literal) => {
                 self.translate_template_literal(template_literal)
             }
@@ -752,7 +781,9 @@ impl WasmTranslator {
         elements: &[ClassElement],
         will_use_return: bool,
     ) -> InstructionsList {
-        let constructor_instructions = if let Some(constructor) = constructor {
+        let (mut constructor_instructions, constructor_function_name) = if let Some(constructor) =
+            constructor
+        {
             let function_instructions =
                 self.translate_function_generic(name, constructor.parameters(), constructor.body());
 
@@ -767,31 +798,222 @@ impl WasmTranslator {
             //     W::local_get("$this"),
             //     W::local_get("$scope"),
             //     W::i32_const(self.insert_data_string()),
-            //     W::call
+            //     W::call,
             // ];
 
-            function_instructions
+            (
+                function_instructions,
+                self.module.functions.last().unwrap().name.clone(),
+            )
         } else {
-            vec![]
+            let function_instructions = self.translate_function_generic(
+                name,
+                &FormalParameterList::default(),
+                &FunctionBody::default(),
+            );
+
+            (
+                function_instructions,
+                self.module
+                    .functions
+                    .iter_mut()
+                    .last()
+                    .unwrap()
+                    .name
+                    .clone(),
+            )
         };
 
-        // use boa_ast::function::ClassElement;
-        //
-        // for element in class.elements() {
-        //     match element {
-        //         ClassElement::MethodDefinition(name, defintion) => {}
-        //         ClassElement::StaticMethodDefinition(_, _) => todo!(),
-        //         ClassElement::FieldDefinition(_, _) => todo!(),
-        //         ClassElement::StaticFieldDefinition(_, _) => todo!(),
-        //         ClassElement::PrivateMethodDefinition(_, _) => todo!(),
-        //         ClassElement::PrivateStaticMethodDefinition(_, _) => todo!(),
-        //         ClassElement::PrivateFieldDefinition(_, _) => todo!(),
-        //         ClassElement::PrivateStaticFieldDefinition(_, _) => todo!(),
-        //         ClassElement::StaticBlock(_) => todo!(),
-        //     }
-        // }
+        use boa_ast::function::ClassElement;
 
-        vec![]
+        let mut additional_constructor_instructions = vec![];
+
+        let constructor_local = self.current_function().add_local(
+            "$constructor",
+            WasmType::Ref("$Function".to_string(), Nullable::False),
+        );
+        let prototype_local = self
+            .current_function()
+            .add_local("$prototype", WasmType::Anyref);
+
+        constructor_instructions.push(W::local_set(&constructor_local));
+
+        if let Some(name) = name {
+            let offset = self.add_identifier(&name);
+            // we have a name, which means it's a declaration
+            constructor_instructions.append(&mut vec![
+                W::global_get("$global_scope"),
+                W::ref_cast(WasmType::Ref("$Scope".to_string(), Nullable::False)),
+                W::i32_const(offset),
+                W::local_get(&constructor_local),
+                W::i32_const(VarType::Const.to_i32()),
+                W::call("$declare_variable"),
+            ]);
+        }
+
+        constructor_instructions.append(&mut vec![
+            W::local_get(&constructor_local),
+            W::i32_const(self.insert_data_string("prototype").0),
+            W::call("$get_property_value"),
+            W::local_set(&prototype_local),
+        ]);
+
+        for element in elements {
+            match element {
+                ClassElement::MethodDefinition(class_method_definition) => {
+                    let function_instructions = self.translate_function_generic(
+                        None,
+                        class_method_definition.parameters(),
+                        class_method_definition.body(),
+                    );
+
+                    let target_instruction = if class_method_definition.is_static() {
+                        W::local_get(&constructor_local)
+                    } else {
+                        W::local_get(&prototype_local)
+                    };
+
+                    use boa_ast::function::ClassElementName;
+                    let mut instructions = match class_method_definition.name() {
+                        ClassElementName::PropertyName(property_name) => match property_name {
+                            PropertyName::Literal(sym) => {
+                                let offset = self.add_symbol(sym.to_owned());
+                                vec![
+                                    target_instruction,
+                                    W::i32_const(offset),
+                                    ..function_instructions,
+                                    W::call("$set_property_value"),
+                                ]
+                            }
+                            PropertyName::Computed(expression) => {
+                                vec![
+                                    target_instruction,
+                                    ..self.translate_expression(expression, true),
+                                    W::call("$to_string"),
+                                    ..function_instructions,
+                                    W::call("$set_property_value_str"),
+                                ]
+                            }
+                        },
+                        ClassElementName::PrivateName(private_name) => {
+                            let offset = self.add_symbol(private_name.description());
+                            vec![
+                                target_instruction,
+                                W::i32_const(self.private_field_offset(offset)),
+                                ..function_instructions,
+                                W::call("$set_property_value"),
+                            ]
+                        }
+                    };
+
+                    constructor_instructions.append(&mut instructions);
+                }
+                ClassElement::FieldDefinition(class_field_definition) => {
+                    let assign = if let Some(expr) = class_field_definition.field() {
+                        self.translate_expression(expr, true)
+                    } else {
+                        vec![W::ref_null_any()]
+                    };
+
+                    match class_field_definition.name() {
+                        PropertyName::Literal(sym) => {
+                            let offset = self.add_symbol(sym.to_owned());
+                            let mut instructions = vec![
+                                W::local_get("$this"),
+                                W::i32_const(offset),
+                                ..assign,
+                                W::call("$set_property_value"),
+                            ];
+
+                            additional_constructor_instructions.append(&mut instructions);
+                        }
+                        PropertyName::Computed(expr) => {
+                            let mut instructions = vec![
+                                W::local_get("$this"),
+                                ..self.translate_expression(expr, true),
+                                W::call("$to_string"),
+                                ..assign,
+                                W::call("$set_property_value_str"),
+                            ];
+
+                            additional_constructor_instructions.append(&mut instructions);
+                        }
+                    }
+                }
+                ClassElement::PrivateFieldDefinition(private_field_definition) => {
+                    let assign = if let Some(expr) = private_field_definition.field() {
+                        self.translate_expression(expr, true)
+                    } else {
+                        vec![W::ref_null_any()]
+                    };
+
+                    let offset = self.add_symbol(private_field_definition.name().description());
+                    let mut instructions = vec![
+                        W::local_get("$this"),
+                        W::i32_const(self.private_field_offset(offset)),
+                        ..assign,
+                        W::call("$set_property_value"),
+                    ];
+
+                    additional_constructor_instructions.append(&mut instructions);
+                }
+                ClassElement::StaticFieldDefinition(class_field_definition) => {
+                    let assign = if let Some(expr) = class_field_definition.field() {
+                        self.translate_expression(expr, true)
+                    } else {
+                        vec![W::ref_null_any()]
+                    };
+
+                    let mut instructions = match class_field_definition.name() {
+                        PropertyName::Literal(sym) => {
+                            let offset = self.add_symbol(sym.to_owned());
+                            vec![
+                                W::local_get(&constructor_local),
+                                W::i32_const(offset),
+                                ..assign,
+                                W::call("$set_property_value"),
+                            ]
+                        }
+                        PropertyName::Computed(expr) => {
+                            vec![
+                                W::local_get(&constructor_local),
+                                ..self.translate_expression(expr, true),
+                                W::call("$to_string"),
+                                ..assign,
+                                W::call("$set_property_value_str"),
+                            ]
+                        }
+                    };
+
+                    constructor_instructions.append(&mut instructions);
+                }
+                ClassElement::PrivateStaticFieldDefinition(private_name, expression) => {
+                    let assign = if let Some(expr) = expression {
+                        self.translate_expression(expr, true)
+                    } else {
+                        vec![W::ref_null_any()]
+                    };
+
+                    let offset = self.add_symbol(private_name.description());
+                    let mut instructions = vec![
+                        W::local_get(&constructor_local),
+                        W::i32_const(self.private_field_offset(offset)),
+                        ..assign,
+                        W::call("$set_property_value"),
+                    ];
+
+                    constructor_instructions.append(&mut instructions);
+                }
+                ClassElement::StaticBlock(static_block_body) => todo!(),
+            }
+        }
+
+        self.module
+            .get_function_mut(&constructor_function_name)
+            .unwrap()
+            .prepend_instructions(additional_constructor_instructions);
+
+        constructor_instructions
     }
 
     fn translate_template_literal(&mut self, lit: &TemplateLiteral) -> InstructionsList {
@@ -1601,16 +1823,13 @@ impl WasmTranslator {
                 result
             }
             Declaration::AsyncGeneratorDeclaration(_async_generator) => todo!(),
-            Declaration::ClassDeclaration(class) => {
-                todo!();
-                self.translate_class(
-                    Some(class.name()),
-                    class.super_ref(),
-                    class.constructor(),
-                    class.elements(),
-                    false,
-                )
-            }
+            Declaration::ClassDeclaration(class) => self.translate_class(
+                Some(class.name()),
+                class.super_ref(),
+                class.constructor(),
+                class.elements(),
+                false,
+            ),
         }
     }
 
