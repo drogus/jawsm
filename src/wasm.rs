@@ -998,6 +998,30 @@ pub fn generate_module() -> WatModule {
             return Property { value: value, flags: 0 };
         }
 
+        // TODO: this is almost the same as create_get_property, refactor
+        fn create_get_property_str(value: anyref, target: anyref, name: String) -> Property {
+            let property: Nullable<Property> = get_property_str(target, name);
+
+            if ref_test!(property, null) {
+                let new_property: Property = create_property(AccessorMethod {
+                    get: value as Function,
+                    set: null
+                });
+                new_property.flags = new_property.flags | PROPERTY_IS_GETTER;
+                return new_property;
+            } else {
+                let existing_property: Property = property as Property;
+                let accessor: AccessorMethod = existing_property.value as AccessorMethod;
+                accessor.get = value as Function;
+                // TODO: check if the existing property is a getter, otherwise we need to throw an
+                // error
+                existing_property.flags = existing_property.flags | PROPERTY_IS_GETTER;
+                return existing_property;
+            }
+
+            throw!(JSException, 54545454 as i31ref);
+        }
+
         fn create_get_property(value: anyref, target: anyref, name: i32) -> Property {
             let property: Nullable<Property> = get_property(target, name);
 
@@ -1020,6 +1044,31 @@ pub fn generate_module() -> WatModule {
 
             throw!(JSException, 54545454 as i31ref);
         }
+
+        // TODO: this is almost the same as create_set_property, refactor
+        fn create_set_property_str(value: anyref, target: anyref, name: String) -> Property {
+            let property: Nullable<Property> = get_property_str(target, name);
+
+            if ref_test!(property, null) {
+                let new_property: Property = create_property(AccessorMethod {
+                    get: null,
+                    set: value as Function
+                });
+                new_property.flags = new_property.flags | PROPERTY_IS_SETTER;
+                return new_property;
+            } else {
+                let existing_property: Property = property as Property;
+                let accessor: AccessorMethod = existing_property.value as AccessorMethod;
+                accessor.set = value as Function;
+                // TODO: check if the existing property is a getter, otherwise we need to throw an
+                // error
+                existing_property.flags = existing_property.flags | PROPERTY_IS_SETTER;
+                return existing_property;
+            }
+
+            throw!(JSException, 4545454 as i31ref);
+        }
+
 
         fn create_set_property(value: anyref, target: anyref, name: i32) -> Property {
             let property: Nullable<Property> = get_property(target, name);
@@ -1430,7 +1479,7 @@ pub fn generate_module() -> WatModule {
 
         fn get_property_name(propertymap: PropertyMap, key: i32) -> Nullable<String> {
             if key < 0 {
-                return get_interned_string_by_key(propertymap.interner, key);                
+                return get_interned_string_by_key(propertymap.interner, key);
             }
 
             return offset_to_string(key);

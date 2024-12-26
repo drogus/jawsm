@@ -301,26 +301,22 @@ impl WasmTranslator {
         self.translate_function_generic(fun.name(), fun.parameters(), fun.body())
     }
 
-    fn translate_get_function(&mut self, fun: &ObjectMethodDefinition) -> InstructionsList {
-        match fun.name() {
-            PropertyName::Literal(sym) => self.translate_function_generic(
-                Some(Identifier::new(sym.clone())),
-                fun.parameters(),
-                fun.body(),
-            ),
-            PropertyName::Computed(_) => todo!(),
-        }
+    fn translate_get_function(
+        &mut self,
+        name: Option<Identifier>,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+    ) -> InstructionsList {
+        self.translate_function_generic(name, params, body)
     }
 
-    fn translate_set_function(&mut self, fun: &ObjectMethodDefinition) -> InstructionsList {
-        match fun.name() {
-            PropertyName::Literal(sym) => self.translate_function_generic(
-                Some(Identifier::new(sym.clone())),
-                fun.parameters(),
-                fun.body(),
-            ),
-            PropertyName::Computed(_) => todo!(),
-        }
+    fn translate_set_function(
+        &mut self,
+        name: Option<Identifier>,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+    ) -> InstructionsList {
+        self.translate_function_generic(name, params, body)
     }
 
     fn translate_lexical(&mut self, decl: &LexicalDeclaration) -> InstructionsList {
@@ -1139,15 +1135,14 @@ impl WasmTranslator {
             let mut instr = match property {
                 PropertyDefinition::IdentifierReference(identifier) => {
                     let offset = self.add_identifier(identifier);
-                    let mut result = self.translate_identifier(identifier);
-                    result.append(&mut vec![
+                    vec![
+                        ..self.translate_identifier(identifier),
                         W::local_set(&temp),
                         W::local_get(&new_instance),
                         W::i32_const(offset),
                         W::local_get(&temp),
                         W::call("$set_property_value"),
-                    ]);
-                    result
+                    ]
                 }
                 PropertyDefinition::Property(property_name, expression) => match property_name {
                     PropertyName::Literal(sym) => {
@@ -1163,77 +1158,136 @@ impl WasmTranslator {
                         result
                     }
                     PropertyName::Computed(computed) => {
-                        let mut name_instructions = self.translate_expression(computed, true);
-                        let mut assign_instructions = self.translate_expression(expression, true);
-                        let mut instructions = vec![];
-                        instructions.push(W::local_get(&new_instance));
-                        instructions.append(&mut name_instructions);
-                        instructions.append(&mut assign_instructions);
-                        instructions.push(W::call("$set_property_value_str"));
-                        instructions
+                        vec![
+                            W::local_get(&new_instance),
+                            ..self.translate_expression(computed, true),
+                            W::call("$to_string"),
+                            ..self.translate_expression(expression, true),
+                            W::call("$set_property_value_str"),
+                        ]
                     }
                 },
-                PropertyDefinition::MethodDefinition(method_definition) => match property {
-                    PropertyDefinition::IdentifierReference(identifier) => {
-                        let sym = identifier.sym();
-                        let mut offset = self.add_symbol(sym);
-                        let func_instr = match method_definition.kind() {
-                            boa_ast::property::MethodDefinitionKind::Get => {
-                                let mut instructions =
-                                    self.translate_get_function(method_definition);
-                                instructions.push(W::local_get(&new_instance));
-                                instructions.push(W::i32_const(offset));
-                                instructions.push(W::call("$create_get_property"));
-                                instructions
-                            }
-                            boa_ast::property::MethodDefinitionKind::Set => {
-                                let mut instructions =
-                                    self.translate_set_function(method_definition);
-                                instructions.push(W::local_get(&new_instance));
-                                instructions.push(W::i32_const(offset));
-                                instructions.push(W::call("$create_set_property"));
-                                instructions
-                            }
-                            boa_ast::property::MethodDefinitionKind::Ordinary => {
-                                match method_definition.name() {
-                                    PropertyName::Literal(sym) => {
-                                        let mut instructions = self.translate_function_generic(
-                                            Some(Identifier::new(sym.clone())),
+                PropertyDefinition::MethodDefinition(method_definition) => {
+                    match method_definition.kind() {
+                        boa_ast::property::MethodDefinitionKind::Get => {
+                            match method_definition.name() {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        ..self.translate_get_function(
+                                            Some(Identifier::new(sym.to_owned())),
                                             method_definition.parameters(),
                                             method_definition.body(),
-                                        );
-                                        instructions.push(W::call("$create_property"));
-                                        instructions
-                                    }
-                                    PropertyName::Computed(_) => todo!(),
+                                        ),
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        W::call("$create_get_property"),
+                                        W::call("$set_property"),
+                                    ]
+                                }
+                                PropertyName::Computed(expr) => {
+                                    let prop_local = self.current_function().add_local(
+                                        "$property_name",
+                                        WasmType::Ref("$String".to_string(), Nullable::False),
+                                    );
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        ..self.translate_expression(expr, true),
+                                        W::call("$to_string"),
+                                        W::local_tee(&prop_local),
+                                        ..self.translate_get_function(
+                                            None,
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::local_get(&new_instance),
+                                        W::local_get(&prop_local),
+                                        W::call("$create_get_property_str"),
+                                        W::call("$set_property_str"),
+                                    ]
                                 }
                             }
-                            boa_ast::property::MethodDefinitionKind::Generator => todo!(),
-                            boa_ast::property::MethodDefinitionKind::AsyncGenerator => {
-                                todo!()
+                        }
+                        boa_ast::property::MethodDefinitionKind::Set => {
+                            match method_definition.name() {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        ..self.translate_set_function(
+                                            Some(Identifier::new(sym.to_owned())),
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        W::call("$create_set_property"),
+                                        W::call("$set_property"),
+                                    ]
+                                }
+                                PropertyName::Computed(expr) => {
+                                    let prop_local = self.current_function().add_local(
+                                        "$property_name",
+                                        WasmType::Ref("$String".to_string(), Nullable::False),
+                                    );
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        ..self.translate_expression(expr, true),
+                                        W::call("$to_string"),
+                                        W::local_tee(&prop_local),
+                                        ..self.translate_set_function(
+                                            None,
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::local_get(&new_instance),
+                                        W::local_get(&prop_local),
+                                        W::call("$create_set_property_str"),
+                                        W::call("$set_property_str"),
+                                    ]
+                                }
                             }
-                            boa_ast::property::MethodDefinitionKind::Async => todo!(),
-                        };
-
-                        let temp_prop = self.current_function().add_local(
-                            "$temp_prop",
-                            WasmType::Ref("$Property".to_string(), Nullable::False),
-                        );
-                        let mut result = func_instr;
-                        result.append(&mut vec![
-                            W::local_set(&temp_prop),
-                            W::local_get(&new_instance),
-                            W::i32_const(offset),
-                            W::local_get(&temp_prop),
-                            W::call("$set_property"),
-                        ]);
-                        result
+                        }
+                        boa_ast::property::MethodDefinitionKind::Ordinary => {
+                            match method_definition.name() {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        ..self.translate_function_generic(
+                                            Some(Identifier::new(sym.to_owned())),
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value"),
+                                    ]
+                                }
+                                PropertyName::Computed(expr) => {
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        ..self.translate_expression(expr, true),
+                                        W::call("$to_string"),
+                                        ..self.translate_function_generic(
+                                            None,
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value_str"),
+                                    ]
+                                }
+                            }
+                        }
+                        boa_ast::property::MethodDefinitionKind::Generator => todo!(),
+                        boa_ast::property::MethodDefinitionKind::AsyncGenerator => {
+                            todo!()
+                        }
+                        boa_ast::property::MethodDefinitionKind::Async => todo!(),
                     }
-                    PropertyDefinition::Property(_, _) => todo!(),
-                    PropertyDefinition::MethodDefinition(_) => todo!(),
-                    PropertyDefinition::SpreadObject(_) => todo!(),
-                    PropertyDefinition::CoverInitializedName(_, _) => todo!(),
-                },
+                }
                 PropertyDefinition::SpreadObject(_) => todo!(),
                 PropertyDefinition::CoverInitializedName(_, _) => todo!(),
             };
@@ -1243,6 +1297,7 @@ impl WasmTranslator {
         if will_use_return {
             instructions.push(W::local_get(&new_instance));
         }
+
         instructions
     }
 
