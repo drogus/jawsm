@@ -30,6 +30,10 @@ pub fn generate_module() -> WatModule {
         static PROPERTY_CONFIGURABLE: i32 = 0b00000100;
         static PROPERTY_IS_GETTER: i32    = 0b00001000;
         static PROPERTY_IS_SETTER: i32    = 0b00010000;
+        // Private properties are checked before runtime, so I'm not even sure if
+        // this is needed in the long run, but I decided to declare and use it for now,
+        // and see how it goes
+        static PROPERTY_IS_PRIVATE: i32   = 0b00100000;
 
         static mut global_strict_mode: i32 = 0;
 
@@ -113,6 +117,11 @@ pub fn generate_module() -> WatModule {
             properties: mut PropertyMap,
             own_prototype: mut anyref,
         }
+
+        // struct Class {
+        //     constructor: Nullable<JSFunc>,
+        //
+        // }
 
         struct AccessorMethod {
             get: mut Nullable<Function>,
@@ -901,6 +910,13 @@ pub fn generate_module() -> WatModule {
             return String {
                 data: string_data,
                 length: total_length
+            };
+        }
+
+        fn create_empty_string() -> String {
+            return String {
+                data: "",
+                length: 0,
             };
         }
 
@@ -2111,6 +2127,34 @@ pub fn generate_module() -> WatModule {
             }
 
             return js_func(function.scope, current_this, arguments);
+        }
+
+        fn add_strings(str1: String, str2: String) -> String {
+            let str1_len: i32 = str1.length;
+            let str2_len: i32 = str2.length;
+            let str1_data: CharArray = str1.data;
+            let str2_data: CharArray = str2.data;
+
+            let total_length: i32 = str1_len + str2_len;
+            let new_string_data: CharArray = [0; total_length];
+
+            // TODO: replace with array.copy when implemented
+            let mut i: i32 = 0;
+            while i < str1_len {
+                new_string_data[i] = str1_data[i];
+                i += 1;
+            }
+
+            i = 0;
+            while i < str2_len {
+                new_string_data[str1_len + i] = str2_data[i];
+                i += 1;
+            }
+
+            return String {
+                data: new_string_data,
+                length: total_length
+            };
         }
 
         fn add(arg1: anyref, arg2: anyref) -> anyref {

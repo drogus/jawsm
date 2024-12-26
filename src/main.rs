@@ -4,7 +4,7 @@ use boa_ast::{
     expression::{
         self,
         access::PropertyAccess,
-        literal::{ArrayLiteral, Literal, ObjectLiteral, TemplateLiteral},
+        literal::{ArrayLiteral, Literal, ObjectLiteral, TemplateElement, TemplateLiteral},
         operator::{
             binary::{ArithmeticOp, BinaryOp, LogicalOp},
             update::UpdateTarget,
@@ -13,7 +13,8 @@ use boa_ast::{
         Await, Call, Expression, Identifier, New, Parenthesized,
     },
     function::{
-        ArrowFunction, AsyncFunction, FormalParameter, FormalParameterList, Function, FunctionBody,
+        ArrowFunction, AsyncFunction, Class, FormalParameter, FormalParameterList, Function,
+        FunctionBody,
     },
     statement::{
         Block, Case, Catch, DoWhileLoop, ErrorHandler, Finally, ForInLoop, ForLoop, ForOfLoop, If,
@@ -237,21 +238,24 @@ impl WasmTranslator {
                         W::local_get("$arguments"),
                         W::ArrayLen,
                         W::I32LtS,
-                        W::r#if(vec![
-                            W::local_get("$scope"),
-                            W::i32_const(offset),
-                            W::local_get("$arguments"),
-                            W::i32_const(i as i32),
-                            W::array_get("$JSArgs"),
-                            W::i32_const(VarType::Param.to_i32()),
-                            W::call("$declare_variable")
-                        ], Some(vec![
-                            W::local_get("$scope"),
-                            W::i32_const(offset),
-                            W::ref_null_any(),
-                            W::i32_const(VarType::Param.to_i32()),
-                            W::call("$declare_variable")
-                        ]))
+                        W::r#if(
+                            vec![
+                                W::local_get("$scope"),
+                                W::i32_const(offset),
+                                W::local_get("$arguments"),
+                                W::i32_const(i as i32),
+                                W::array_get("$JSArgs"),
+                                W::i32_const(VarType::Param.to_i32()),
+                                W::call("$declare_variable"),
+                            ],
+                            Some(vec![
+                                W::local_get("$scope"),
+                                W::i32_const(offset),
+                                W::ref_null_any(),
+                                W::i32_const(VarType::Param.to_i32()),
+                                W::call("$declare_variable"),
+                            ]),
+                        ),
                     ]);
                 }
                 boa_ast::declaration::Binding::Pattern(_pattern) => todo!(),
@@ -541,21 +545,21 @@ impl WasmTranslator {
                 let lhs = self.current_function().add_local("$lhs", WasmType::Anyref);
 
                 vec![
-                  ..self.translate_expression(binary.lhs(), true),
-                  W::local_set(&lhs),
-                  ..self.translate_expression(binary.rhs(), true),
-                  W::local_set(&rhs),
-                  W::local_get(&lhs),
-                  W::local_get(&rhs),
-                  W::call(func_name),
+                    ..self.translate_expression(binary.lhs(), true),
+                    W::local_set(&lhs),
+                    ..self.translate_expression(binary.rhs(), true),
+                    W::local_set(&rhs),
+                    W::local_get(&lhs),
+                    W::local_get(&rhs),
+                    W::call(func_name),
                 ]
             }
             BinaryOp::Comma => {
                 vec![
-                  ..self.translate_expression(binary.lhs(), false),
-                  ..self.translate_expression(binary.rhs(), true),
+                    ..self.translate_expression(binary.lhs(), false),
+                    ..self.translate_expression(binary.rhs(), true),
                 ]
-            },
+            }
         }
     }
 
@@ -683,7 +687,7 @@ impl WasmTranslator {
                 self.translate_async_function(async_function)
             }
             Expression::AsyncGenerator(_async_generator) => todo!(),
-            Expression::Class(_class) => todo!(),
+            Expression::Class(class) => self.translate_class(class, will_use_return),
             Expression::TemplateLiteral(template_literal) => {
                 self.translate_template_literal(template_literal)
             }
@@ -714,14 +718,80 @@ impl WasmTranslator {
         }
     }
 
-    fn translate_template_literal(&mut self, lit: &TemplateLiteral) -> InstructionsList {
-        let (offset, length) = self.insert_data_string("template literal");
-        vec![
-            W::I32Const(offset),
-            W::I32Const(length),
-            W::call("$new_static_string"),
-        ]
+    fn translate_class(&mut self, class: &Class, will_use_return: bool) -> InstructionsList {
+        let constructor_instructions = if let Some(constructor) = class.constructor() {
+            let function_instructions = self.translate_function_generic(
+                class.name(),
+                constructor.parameters(),
+                constructor.body(),
+            );
+
+            // At the moment `translate_function_generic` doesn't allow to easily get the last
+            // function. Here we rely on an implementation detail, ie. that the last function is
+            // inserted to the end of the functions vector.
+            // TODO: fix it, cause it will break when how functions are persisted changes
+            //
+            // TODO: implement error when using constructor without new()
+            // let constructor = self.module.functions.last().unwrap();
+            // let instructions = vec![
+            //     W::local_get("$this"),
+            //     W::local_get("$scope"),
+            //     W::i32_const(self.insert_data_string()),
+            //     W::call
+            // ];
+
+            function_instructions
+        } else {
+            vec![]
+        };
+
+        // use boa_ast::function::ClassElement;
+        //
+        // for element in class.elements() {
+        //     match element {
+        //         ClassElement::MethodDefinition(name, defintion) => {}
+        //         ClassElement::StaticMethodDefinition(_, _) => todo!(),
+        //         ClassElement::FieldDefinition(_, _) => todo!(),
+        //         ClassElement::StaticFieldDefinition(_, _) => todo!(),
+        //         ClassElement::PrivateMethodDefinition(_, _) => todo!(),
+        //         ClassElement::PrivateStaticMethodDefinition(_, _) => todo!(),
+        //         ClassElement::PrivateFieldDefinition(_, _) => todo!(),
+        //         ClassElement::PrivateStaticFieldDefinition(_, _) => todo!(),
+        //         ClassElement::StaticBlock(_) => todo!(),
+        //     }
+        // }
+
+        vec![]
     }
+
+    fn translate_template_literal(&mut self, lit: &TemplateLiteral) -> InstructionsList {
+        let mut result = vec![W::call("$create_empty_string")];
+
+        for element in lit.elements() {
+            match element {
+                TemplateElement::String(s) => {
+                    let s = self.interner.resolve(*s).unwrap().to_string();
+                    let (offset, length) = self.insert_data_string(&s);
+
+                    result.append(&mut vec![
+                        W::I32Const(offset),
+                        W::I32Const(length),
+                        W::call("$add_static_string_to_string"),
+                    ]);
+                }
+                TemplateElement::Expr(expr) => {
+                    result.append(&mut vec![
+                        ..self.translate_expression(expr, true),
+                        W::call("$to_string"),
+                        W::call("$add_strings"),
+                    ]);
+                }
+            }
+        }
+
+        result
+    }
+
     fn translate_conditional(&mut self, conditional: &Conditional) -> InstructionsList {
         let result_local = self
             .current_function()
@@ -1424,7 +1494,7 @@ impl WasmTranslator {
                 }
             }
             Declaration::AsyncGenerator(_async_generator) => todo!(),
-            Declaration::Class(_class) => todo!(),
+            Declaration::Class(class) => self.translate_class(class, false),
         }
     }
 
