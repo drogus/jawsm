@@ -533,7 +533,7 @@ impl WasmTranslator {
             BinaryOp::Relational(relational_op) => {
                 let func_name = match relational_op {
                     RelationalOp::Equal => "$loose_equal",
-                    RelationalOp::NotEqual => "$not_loose_equal",
+                    RelationalOp::NotEqual => "$loose_not_equal",
                     RelationalOp::StrictEqual => "$strict_equal",
                     RelationalOp::StrictNotEqual => "$strict_not_equal",
                     RelationalOp::GreaterThan => "$greater_than",

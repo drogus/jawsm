@@ -145,10 +145,10 @@ pub fn generate_module() -> WatModule {
 
         type AnyrefArray = [mut anyref];
 
-        // at the moment it doesn't have to be a struct, but in the future
-        // we will need support for ptototype and properties and what not
         struct Array {
-            array: mut AnyrefArray
+            array: mut AnyrefArray,
+            properties: mut PropertyMap,
+            own_prototype: mut anyref,
         }
 
         type PollableFunction = fn(scope: Scope, this: anyref) -> anyref;
@@ -182,6 +182,7 @@ pub fn generate_module() -> WatModule {
         static mut global_scope: Nullable<Scope> = null;
         static mut promise_prototype: Nullable<Object> = null;
         static mut global_object_prototype: Nullable<Object> = null;
+        static mut global_array_prototype: Nullable<Object> = null;
         static mut global_function_prototype: Nullable<Object> = null;
         static mut global_number_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
@@ -290,6 +291,19 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
+        fn create_array_prototype() -> Object {
+            let object: Object = new_object();
+
+            set_property(object, data!("toString"),
+                create_property_function(global_scope as Scope, Array_toString, null));
+
+            set_property(object, data!("constructor"),
+                create_property_function(global_scope as Scope, Array_constructor, null));
+
+            object.own_prototype = global_object_prototype as Object;
+            return object;
+        }
+
         fn setup_object_constructor(constructor: Function) {
             set_property(constructor, data!("create"),
                 create_property_function(global_scope as Scope, Object_create, null));
@@ -300,6 +314,10 @@ pub fn generate_module() -> WatModule {
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             return new_static_string(data!("[object Object]"), 15);
+        }
+
+        fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return new_static_string(data!("<TODO: array>"), 15);
         }
 
         fn Object_create(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -430,11 +448,15 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_object(value: anyref) -> i32 {
-            if ref_test!(value, Object) || ref_test!(value, Promise) {
+            if ref_test!(value, Object) || ref_test!(value, Promise) || ref_test!(value, Array) {
                 return 1;
             }
 
             return 0;
+        }
+
+        fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return new_array(0);
         }
 
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -853,7 +875,8 @@ pub fn generate_module() -> WatModule {
             let mut result: anyref;
             let object: Object;
             let promise: Promise;
-            if ref_test!(first, Object) || ref_test!(first, Promise) {
+            let array: Array;
+            if is_object(first) {
                 result = first;
             } else {
                 result = second;
@@ -867,6 +890,10 @@ pub fn generate_module() -> WatModule {
                 promise = result as Promise;
                 promise.own_prototype = prototype;
                 set_property(promise, data!("constructor"), create_bare_property(constructor));
+            } else if ref_test!(result, Array) {
+                array = result as Array;
+                array.own_prototype = prototype;
+                set_property(array, data!("constructor"), create_bare_property(constructor));
             }
 
             return result;
@@ -1126,7 +1153,9 @@ pub fn generate_module() -> WatModule {
 
         fn new_array(size: i32) -> Array {
             return Array {
-                array: [null; size]
+                array: [null; size],
+                properties: create_propertymap(),
+                own_prototype: global_array_prototype
             };
         }
 
@@ -1398,6 +1427,8 @@ pub fn generate_module() -> WatModule {
                 return (target as Promise).properties;
             } else if ref_test!(target, GlobalThis) {
                 return (target as GlobalThis).properties;
+            } else if ref_test!(target, Array) {
+                return (target as Array).properties;
             } else if ref_test!(target, Number) {
                 // numbers don't have their own properties, but use the Number prototype
                 return (global_number_prototype as Object).properties;
@@ -1803,6 +1834,9 @@ pub fn generate_module() -> WatModule {
                 let global_this: GlobalThis = target as GlobalThis;
                 propertymap_delete(global_this.properties, name);
                 delete_variable(global_scope as Scope, name);
+            } else if ref_test!(target, Array) {
+                let array: Array = target as Array;
+                propertymap_delete(array.properties, name);
             } else if ref_test!(target, Number) {
                 // do nothing?
             }
@@ -1879,6 +1913,11 @@ pub fn generate_module() -> WatModule {
                 return;
             }
 
+            if ref_test!(target, Array) {
+                propertymap_set((target as Array).properties, name, property);
+                return;
+            }
+
             if ref_test!(target, GlobalThis) {
                 let key: i32 = propertymap_set((target as GlobalThis).properties, name, property);
                 declare_variable(global_scope as Scope, key, property.value, VARIABLE_VAR);
@@ -1905,6 +1944,11 @@ pub fn generate_module() -> WatModule {
 
                 if ref_test!(target, Promise) {
                     propertymap_set((target as Promise).properties, name, value_property);
+                    return;
+                }
+
+                if ref_test!(target, Array) {
+                    propertymap_set((target as Array).properties, name, value_property);
                     return;
                 }
 
@@ -2284,6 +2328,10 @@ pub fn generate_module() -> WatModule {
             return !strict_equal(arg1, arg2);
         }
 
+        fn loose_not_equal(arg1: anyref, arg2: anyref) -> i31ref {
+            return !loose_equal(arg1, arg2);
+        }
+
         fn operator_in(arg1: anyref, arg2: anyref) -> i31ref {
             let property: Nullable<Property> = get_property_str(arg2, arg1);
 
@@ -2464,6 +2512,8 @@ pub fn generate_module() -> WatModule {
                 return (target as Function).own_prototype;
             } else if ref_test!(target, Promise) {
                 return (target as Promise).own_prototype;
+            } else if ref_test!(target, Array) {
+                return (target as Array).own_prototype;
             } else if ref_test!(target, GlobalThis) {
                 return (target as GlobalThis).own_prototype;
             } else if ref_test!(target, Number) {
@@ -2566,7 +2616,7 @@ pub fn generate_module() -> WatModule {
                 return new_static_string(data!("number"), 6);
             }
 
-            if ref_test!(arg, Object) || ref_test!(arg, Promise) {
+            if ref_test!(arg, Object) || ref_test!(arg, Promise) || ref_test!(arg, Array) {
                 return new_static_string(data!("object"), 6);
             }
 
@@ -3156,11 +3206,13 @@ pub fn generate_module() -> WatModule {
 
             promise_prototype = create_promise_prototype();
             global_object_prototype = create_object_prototype();
+            global_array_prototype = create_array_prototype();
             global_function_prototype = create_function_prototype();
             global_number_prototype = create_number_prototype();
 
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
+            let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
             let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
             let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
             let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
