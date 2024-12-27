@@ -3021,8 +3021,9 @@ pub fn generate_module() -> WatModule {
         }
 
         fn op_minus(arg: anyref) -> Number {
-            // TODO: just a stup for now
-            return new_number(1);
+            // TODO: convert arg to primitive
+            let num: f64 = (arg as Number).value;
+            return new_number(-num);
         }
 
         // fn to_string(target: anyref) -> String {

@@ -521,14 +521,28 @@ impl WasmTranslator {
             }
             BinaryOp::Bitwise(bitwise_op) => {
                 use boa_ast::expression::operator::binary::BitwiseOp;
-                match bitwise_op {
-                    BitwiseOp::And => todo!(),
-                    BitwiseOp::Or => todo!(),
-                    BitwiseOp::Xor => todo!(),
-                    BitwiseOp::Shl => todo!(),
-                    BitwiseOp::Shr => todo!(),
-                    BitwiseOp::UShr => todo!(),
-                }
+                let operation = match bitwise_op {
+                    BitwiseOp::And => W::I32And,
+                    BitwiseOp::Or => W::I32Or,
+                    BitwiseOp::Xor => W::I32Xor,
+                    BitwiseOp::Shl => W::I32Shl,
+                    BitwiseOp::Shr => W::I32ShrS,
+                    BitwiseOp::UShr => W::I32ShrU,
+                };
+                // TODO: convert args to primitive
+                vec![
+                    ..self.translate_expression(binary.lhs(), true),
+                    W::ref_cast(WasmType::Ref("$Number".to_string(), Nullable::False)),
+                    W::struct_get("$Number", "$value"),
+                    W::I32TruncF64S,
+                    ..self.translate_expression(binary.rhs(), true),
+                    W::ref_cast(WasmType::Ref("$Number".to_string(), Nullable::False)),
+                    W::struct_get("$Number", "$value"),
+                    W::I32TruncF64S,
+                    operation,
+                    W::F64ConvertI32S,
+                    W::call("$new_number"),
+                ]
             }
             BinaryOp::Relational(relational_op) => {
                 let func_name = match relational_op {
@@ -546,17 +560,15 @@ impl WasmTranslator {
                 let rhs = self.current_function().add_local("$rhs", WasmType::Anyref);
                 let lhs = self.current_function().add_local("$lhs", WasmType::Anyref);
 
-                let mut result = vec![];
-                result.append(&mut self.translate_expression(binary.lhs(), true));
-                result.push(W::local_set(&lhs));
-                result.append(&mut self.translate_expression(binary.rhs(), true));
-                result.append(&mut vec![
+                vec![
+                    ..self.translate_expression(binary.lhs(), true),
+                    W::local_set(&lhs),
+                    ..self.translate_expression(binary.rhs(), true),
                     W::local_set(&rhs),
                     W::local_get(&lhs),
                     W::local_get(&rhs),
                     W::call(func_name),
-                ]);
-                result
+                ]
             }
             BinaryOp::Logical(logical_op) => {
                 let func_name = match logical_op {
