@@ -62,6 +62,17 @@ pub fn generate_module() -> WatModule {
             current_offset: mut i32,
         }
 
+        struct Symbol {}
+        struct SymbolsMapEntry {
+            key: String,
+            symbol: Symbol
+        }
+        type SymbolsMapEntries = [mut Nullable<SymbolsMapEntry>];
+        struct SymbolsMap {
+            entries: mut SymbolsMapEntries,
+            length: mut i32
+        }
+
         struct Property {
             value: mut anyref,
             flags: mut i32
@@ -72,10 +83,17 @@ pub fn generate_module() -> WatModule {
             key: mut i32,
             value: mut Property
         }
+        struct SymPropertyMapEntry {
+            key: mut Symbol,
+            value: mut Property
+        }
         type PropertyEntriesArray = [mut Nullable<PropertyMapEntry>];
+        type SymPropertyEntriesArray = [mut Nullable<SymPropertyMapEntry>];
         struct PropertyMap {
             entries: mut PropertyEntriesArray,
+            sym_entries: mut SymPropertyEntriesArray,
             size: mut i32,
+            sym_size: mut i32,
             interner: Interner,
         }
 
@@ -185,9 +203,15 @@ pub fn generate_module() -> WatModule {
         static mut global_array_prototype: Nullable<Object> = null;
         static mut global_function_prototype: Nullable<Object> = null;
         static mut global_number_prototype: Nullable<Object> = null;
+        static mut global_symbol_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
         static mut current_string_lookup: Nullable<String> = null;
         static mut global_this: Nullable<GlobalThis>  = null;
+        static mut symbols: SymbolsMap = SymbolsMap {
+            entries: [null; 10],
+            length: 0
+        };
+        static symbol_iterator: Symbol = Symbol {};
 
         // Memory management functions required by the Component Model
         #[export("cabi_realloc")]
@@ -299,6 +323,15 @@ pub fn generate_module() -> WatModule {
 
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Array_constructor, null));
+
+            object.own_prototype = global_object_prototype as Object;
+            return object;
+        }
+
+        fn create_symbol_prototype(constructor: Function) -> Object {
+            let object: Object = create_object();
+
+            set_property(object, data!("constructor"), create_bare_property(constructor));
 
             object.own_prototype = global_object_prototype as Object;
             return object;
@@ -457,6 +490,10 @@ pub fn generate_module() -> WatModule {
 
         fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             return create_array(0);
+        }
+
+        fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return Symbol {};
         }
 
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -1009,7 +1046,9 @@ pub fn generate_module() -> WatModule {
         fn create_propertymap() -> PropertyMap {
             return PropertyMap {
                 entries: [null; 10],
+                sym_entries: [null; 2],
                 size: 0,
+                sym_size: 0,
                 interner: create_interner(),
             };
         }
@@ -1592,6 +1631,37 @@ pub fn generate_module() -> WatModule {
             return get_property(target, offset);
         }
 
+        fn get_property_sym(target: anyref, key: Symbol) -> Nullable<Property> {
+            // TODO: this is very similar to get_property, might be good to refactor
+            let mut result: Nullable<Property> = null;
+            let function: Function;
+            let property: Property;
+            let global_this: GlobalThis;
+
+            let properties: Nullable<PropertyMap> = get_propertymap(target);
+            let own_prototype: anyref = get_own_prototype(target);
+            if !ref_test!(properties, null) {
+                result = propertymap_get_sym(properties as PropertyMap, key);
+                if ref_test!(result, null) {
+                    if !ref_test!(own_prototype, null) {
+                        result = get_property_sym(own_prototype, key);
+                    }
+                }
+            }
+
+            if ref_test!(result, null) {
+                return null as Nullable<Property>;
+            }
+
+            // at this point the result has to be a property
+            let property = result as Property;
+            if ref_test!(property.value, Function) {
+                (property.value as Function).this = target;
+            }
+
+            return result;
+        }
+
         fn get_own_property_str(target: anyref, name: anyref) -> Nullable<Property> {
             let offset: i32;
 
@@ -1638,6 +1708,16 @@ pub fn generate_module() -> WatModule {
 
         fn get_property_value_str(target: anyref, name: String) -> anyref {
             let property: Nullable<Property> = get_property_str(target, name);
+
+            if !ref_test!(property, null) {
+                return get_value_of_property(property, target);
+            }
+
+            return null;
+        }
+
+        fn get_property_value_sym(target: anyref, key: Symbol) -> anyref {
+            let property: Nullable<Property> = get_property_sym(target, key);
 
             if !ref_test!(property, null) {
                 return get_value_of_property(property, target);
@@ -1711,6 +1791,54 @@ pub fn generate_module() -> WatModule {
             }
 
             throw!(JSException, create_error(data!("Error"), create_string_from_array("not implemented, converting to string")));
+        }
+
+        fn set_property_value_sym(target: anyref, key: Symbol, value: anyref) {
+            // TODO: this code is almost the same as set_property_value
+            let property: Nullable<Property> = get_property_sym(target, key);
+            let value_property: Property;
+            if ref_test!(property, null) {
+                value_property = create_property(value);
+                if ref_test!(target, Object) {
+                    propertymap_set_sym((target as Object).properties, key, value_property);
+                    return;
+                }
+
+                if ref_test!(target, Function) {
+                    propertymap_set_sym((target as Function).properties, key, value_property);
+                    return;
+                }
+
+                if ref_test!(target, Promise) {
+                    propertymap_set_sym((target as Promise).properties, key, value_property);
+                    return;
+                }
+
+                if ref_test!(target, Array) {
+                    propertymap_set_sym((target as Array).properties, key, value_property);
+                    return;
+                }
+
+                // TODO: need to implement this
+                // if ref_test!(target, GlobalThis) {
+                //     let key: i32 = propertymap_set_sym((target as GlobalThis).properties, key, value_property);
+                //     declare_variable(global_scope as Scope, key, value_property.value, VARIABLE_VAR);
+                //     return;
+                // }
+            } else {
+                value_property = property as Property;
+                if value_property.flags & PROPERTY_IS_SETTER != 0 {
+                    let accessor: AccessorMethod = value_property.value as AccessorMethod;
+                    let function: Function = accessor.set as Function;
+                    let arguments: JSArgs = create_arguments_1(value);
+                    call_function(function, target, arguments);
+                } else {
+                    value_property.value = value;
+                }
+                return;
+            }
+
+            throw!(JSException, create_string_from_array("could not set property by symbol"));
         }
 
         fn set_property_value_str(target: anyref, name: anyref, value: anyref) {
@@ -1854,17 +1982,23 @@ pub fn generate_module() -> WatModule {
 
         fn clone_propertymap(map: PropertyMap) -> PropertyMap {
             let mut entry: PropertyMapEntry;
+            let mut sym_entry: SymPropertyMapEntry;
             let mut maybe_entry: Nullable<PropertyMapEntry>;
+            let mut maybe_sym_entry: Nullable<SymPropertyMapEntry>;
             let new_propertymap: PropertyMap = PropertyMap {
                 entries: [null; map.size],
+                sym_entries: [null; map.sym_size],
                 size: map.size,
+                sym_size: map.sym_size,
                 interner: clone_interner(map.interner)
             };
             let entries: PropertyEntriesArray = map.entries;
             let new_entries: PropertyEntriesArray = new_propertymap.entries;
+            let sym_entries: SymPropertyEntriesArray = map.sym_entries;
+            let new_sym_entries: SymPropertyEntriesArray = new_propertymap.sym_entries;
 
             let mut i: i32 = 0;
-            let size: i32 = map.size;
+            let mut size: i32 = map.size;
             while i < size {
                 maybe_entry = entries[i];
                 if !ref_test!(maybe_entry, null) {
@@ -1872,6 +2006,20 @@ pub fn generate_module() -> WatModule {
                     new_entries[i] = PropertyMapEntry {
                         key: entry.key,
                         value: entry.value
+                    };
+                }
+                i+=1;
+            }
+
+            i = 0;
+            size = map.sym_size;
+            while i < size {
+                maybe_sym_entry = sym_entries[i];
+                if !ref_test!(maybe_sym_entry, null) {
+                    sym_entry = maybe_sym_entry as SymPropertyMapEntry;
+                    new_sym_entries[i] = SymPropertyMapEntry {
+                        key: sym_entry.key,
+                        value: sym_entry.value
                     };
                 }
                 i+=1;
@@ -1968,11 +2116,17 @@ pub fn generate_module() -> WatModule {
                     // fraction. In case the Number is *not* an integer it shouldn't be treated as
                     // an index, but with current implementation it will
                     return get_array_element(target, (prop_name as Number).value as i32);
+                } else if ref_test!(prop_name, Symbol) {
+                    return get_property_value_sym(target, prop_name as Symbol);
                 } else {
                     return get_property_value_str(target, to_string(prop_name));
                 }
             } else if is_object(target) {
-                return get_property_value_str(target, to_string(prop_name));
+                if ref_test!(prop_name, Symbol) {
+                    return get_property_value_sym(target, prop_name as Symbol);
+                } else {
+                    return get_property_value_str(target, to_string(prop_name));
+                }
             }
 
             return null;
@@ -1986,14 +2140,24 @@ pub fn generate_module() -> WatModule {
                     // an index, but with current implementation it will
                     set_array_element(target, (prop_name as Number).value as i32, value);
                     return;
+                } else if ref_test!(prop_name, Symbol) {
+                    set_property_value_sym(target, prop_name as Symbol, value);
+                    return;
                 } else {
                     return set_property_value_str(target, to_string(prop_name), value);
                     return;
                 }
             } else if is_object(target) {
-                set_property_value_str(target, to_string(prop_name), value);
-                return;
+                if ref_test!(prop_name, Symbol) {
+                    set_property_value_sym(target, prop_name as Symbol, value);
+                    return;
+                } else {
+                    set_property_value_str(target, to_string(prop_name), value);
+                    return;
+                }
             }
+
+            // TODO: do we have to throw an error here?
         }
 
         fn set_array_element(target: anyref, index: i32, value: anyref) {
@@ -2246,6 +2410,57 @@ pub fn generate_module() -> WatModule {
             return interner.current_offset;
         }
 
+        fn propertymap_set_sym(map: PropertyMap, key: Symbol, value: Property) {
+            let mut entries: SymPropertyEntriesArray = map.sym_entries;
+            let new_entry: SymPropertyMapEntry;
+            let mut found: i32 = 0;
+            let mut i: i32 = 0;
+            let new_size: i32;
+            let mut new_entries: SymPropertyEntriesArray;
+            let mut entry: SymPropertyMapEntry;
+            let len: i32 = len!(entries);
+            let mut map_size: i32 = map.sym_size;
+
+            new_entry = SymPropertyMapEntry { key: key, value: value };
+            // First, search for existing key
+            while i < map_size {
+                if ref_test!(entries[i], SymPropertyMapEntry) {
+                    entry = entries[i] as SymPropertyMapEntry;
+                    if entry.key == key {
+                        entry.value = value;
+                        found = 1;
+                        return;
+                    }
+                }
+                i += 1;
+            }
+
+            // If key wasn't found, proceed with insertion
+            if found == 0 {
+                // Check if we need to resize
+                if map_size >= len {
+                    new_size  = len * 2;
+                    new_entries = [null; new_size];
+
+                    // Copy old entries to new array
+                    i = 0;
+                    while i < len {
+                        new_entries[i] = entries[i];
+                        i += 1;
+                    }
+
+                    map.sym_entries = new_entries;
+                    entries = new_entries;
+                }
+
+                // Add new entry and increment size
+                entries[map.sym_size] = new_entry;
+                map.sym_size = map.sym_size + 1;
+            }
+
+            return;
+        }
+
         fn propertymap_set(map: PropertyMap, key_param: i32, value: Property) -> i32 {
             let mut key: i32 = key_param;
             let mut entries: PropertyEntriesArray = map.entries;
@@ -2346,6 +2561,20 @@ pub fn generate_module() -> WatModule {
             }
 
             return 0;
+        }
+
+        fn propertymap_get_sym(map: PropertyMap, key: Symbol) -> Nullable<Property> {
+            let entries: SymPropertyEntriesArray = map.sym_entries;
+            let mut i: i32 = 0;
+
+            while i < map.sym_size {
+                if entries[i].key == key {
+                    return entries[i].value;
+                }
+                i += 1;
+            }
+
+            return null as Nullable<Property>;
         }
 
         fn propertymap_get(map: PropertyMap, key: i32) -> Nullable<Property> {
@@ -3412,21 +3641,26 @@ pub fn generate_module() -> WatModule {
         fn install_globals() {
             global_scope = new_scope(null);
 
+            let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
+            let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
+            let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
+            let symbol_constructor: Function = new_function(global_scope as Scope, Symbol_constructor, null);
+            let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
+            let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
+            let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
+
             promise_prototype = create_promise_prototype();
             global_object_prototype = create_object_prototype();
             global_array_prototype = create_array_prototype();
             global_function_prototype = create_function_prototype();
             global_number_prototype = create_number_prototype();
-
-            let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
-            let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
-            let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
-            let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
-            let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
-            let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
+            global_symbol_prototype = create_symbol_prototype(symbol_constructor);
 
             set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
             set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
+            set_property(array_constructor, data!("prototype"), create_bare_property(global_array_prototype));
+            set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
+            set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));
 
             let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype)) as Object;
             set_property_value(error_prototype, data!("constructor"), error_constructor);
@@ -3443,6 +3677,8 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, data!("Promise"), promise_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Error"), error_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("Array"), array_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("Symbol"), symbol_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("ReferenceError"), reference_error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("TypeError"), type_error_constructor, VARIABLE_CONST);
 
@@ -3464,11 +3700,21 @@ pub fn generate_module() -> WatModule {
                 return 0;
             }
             catch(JSException, error: anyref) {
-                let args: JSArgs = create_arguments_2(
-                    new_static_string(data!("error encountered"), 17),
-                    error
-                );
-                log(args);
+                let message: anyref = get_property_value(error, data!("message"));
+
+                if !ref_test!(message, null) {
+                    let args: JSArgs = create_arguments_2(
+                        new_static_string(data!("error encountered"), 17),
+                        message
+                    );
+                    log(args);
+                } else {
+                    let args: JSArgs = create_arguments_2(
+                        new_static_string(data!("error encountered"), 17),
+                        error
+                    );
+                    log(args);
+                }
                 return 1;
             }
 
