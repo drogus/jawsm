@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use boa_ast::{
-    declaration::{Declaration, LexicalDeclaration, VarDeclaration, VariableList},
+    declaration::{Binding, Declaration, LexicalDeclaration, VarDeclaration, VariableList},
     expression::{
         self,
         access::PropertyAccess,
@@ -20,6 +20,7 @@ use boa_ast::{
         ClassElement, ClassExpression, FormalParameter, FormalParameterList, FunctionBody,
         FunctionDeclaration, FunctionExpression,
     },
+    pattern::Pattern,
     property::PropertyName,
     scope::Scope,
     statement::{
@@ -48,6 +49,7 @@ use tarnik_ast::{
     WatModule,
 };
 
+#[derive(Clone)]
 enum VarType {
     Const,
     Let,
@@ -210,6 +212,160 @@ impl WasmTranslator {
         instructions
     }
 
+    fn translate_binding(
+        &mut self,
+        var_instructions: InstructionsList,
+        binding: &Binding,
+        init: Option<&Expression>,
+        var_type: VarType,
+    ) -> InstructionsList {
+        let mut result = vec![];
+        let assign = if let Some(init) = init {
+            self.translate_expression(init, true)
+        } else {
+            vec![W::ref_null_any()]
+        };
+        match binding {
+            Binding::Identifier(identifier) => {
+                let offset = self.add_identifier(identifier);
+                result.append(&mut vec![
+                    W::local_get("$scope"),
+                    W::i32_const(offset),
+                    ..var_instructions,
+                    ..assign.clone(),
+                    W::call("$coalesce"),
+                    W::i32_const(var_type.to_i32()),
+                    W::call("$declare_variable"),
+                ]);
+            }
+            Binding::Pattern(pattern) => {
+                result.append(&mut self.translate_pattern(
+                    var_instructions,
+                    assign.clone(),
+                    pattern,
+                    var_type,
+                ));
+            }
+        }
+
+        result
+    }
+
+    fn translate_pattern(
+        &mut self,
+        var_instructions: InstructionsList,
+        assign: InstructionsList,
+        pattern: &Pattern,
+        var_type: VarType,
+    ) -> InstructionsList {
+        let current_argument = self
+            .current_function()
+            .add_local("$current_argument", WasmType::Anyref);
+        let mut result = vec![
+            ..var_instructions,
+            ..assign.clone(),
+            W::call("$coalesce"),
+            W::call("$clone"),
+            W::local_set(&current_argument),
+        ];
+        match pattern {
+            Pattern::Object(object_pattern) => {
+                use boa_ast::pattern::ObjectPatternElement;
+                for element in object_pattern.bindings() {
+                    match element {
+                        ObjectPatternElement::SingleName {
+                            name,
+                            ident,
+                            default_init,
+                        } => {
+                            let var_name_offset = self.add_identifier(ident);
+                            let init_instructions = if let Some(init) = default_init {
+                                self.translate_expression(init, true)
+                            } else {
+                                vec![W::ref_null_any()]
+                            };
+                            match name {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    result.append(&mut vec![
+                                        W::local_get(&current_argument),
+                                        W::I32Const(offset),
+                                        W::I32Const(var_name_offset),
+                                        W::local_get("$scope"),
+                                        ..init_instructions,
+                                        W::call("$destructure_property_single_name"),
+                                    ]);
+                                }
+                                PropertyName::Computed(expression) => {
+                                    println!("offset: {var_name_offset}");
+                                    let mut instructions = vec![
+                                        W::local_get(&current_argument),
+                                        ..self.translate_expression(expression, true),
+                                        W::call("$to_string"),
+                                        W::I32Const(var_name_offset),
+                                        W::local_get("$scope"),
+                                        ..init_instructions,
+                                        W::call("$destructure_property_single_name_str"),
+                                    ];
+                                    result.append(&mut instructions);
+                                }
+                            }
+                        }
+                        ObjectPatternElement::RestProperty { ident } => {
+                            let offset = self.add_identifier(ident);
+                            result.append(&mut vec![
+                                W::local_get("$scope"),
+                                W::I32Const(offset),
+                                W::local_get(&current_argument),
+                                W::I32Const(var_type.to_i32()),
+                                W::call("$declare_variable"),
+                            ]);
+                        }
+                        ObjectPatternElement::AssignmentPropertyAccess {
+                            name,
+                            access,
+                            default_init,
+                        } => todo!(),
+                        ObjectPatternElement::AssignmentRestPropertyAccess { access } => {
+                            todo!()
+                        }
+                        ObjectPatternElement::Pattern {
+                            name,
+                            pattern,
+                            default_init,
+                        } => {
+                            let var_instructions = match name {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&current_argument),
+                                        W::I32Const(offset),
+                                        W::call("$get_property_value"),
+                                    ]
+                                }
+                                PropertyName::Computed(expression) => todo!(),
+                            };
+                            let assign = if let Some(init) = default_init {
+                                self.translate_expression(init, true)
+                            } else {
+                                vec![W::ref_null_any()]
+                            };
+                            result.append(&mut self.translate_pattern(
+                                var_instructions,
+                                assign,
+                                pattern,
+                                var_type.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+            Pattern::Array(array_pattern) => todo!(),
+        }
+
+        result
+    }
+
     fn translate_function_generic(
         &mut self,
         name: Option<Identifier>,
@@ -243,36 +399,18 @@ impl WasmTranslator {
 
         // set parameters on the scope
         for (i, param) in params.as_ref().iter().enumerate() {
-            match param.variable().binding() {
-                boa_ast::declaration::Binding::Identifier(identifier) => {
-                    let offset = self.add_identifier(identifier);
-                    self.current_function().add_instructions(vec![
-                        W::i32_const(i as i32),
-                        W::local_get("$arguments"),
-                        W::ArrayLen,
-                        W::I32LtS,
-                        W::r#if(
-                            vec![
-                                W::local_get("$scope"),
-                                W::i32_const(offset),
-                                W::local_get("$arguments"),
-                                W::i32_const(i as i32),
-                                W::array_get("$JSArgs"),
-                                W::i32_const(VarType::Param.to_i32()),
-                                W::call("$declare_variable"),
-                            ],
-                            Some(vec![
-                                W::local_get("$scope"),
-                                W::i32_const(offset),
-                                W::ref_null_any(),
-                                W::i32_const(VarType::Param.to_i32()),
-                                W::call("$declare_variable"),
-                            ]),
-                        ),
-                    ]);
-                }
-                boa_ast::declaration::Binding::Pattern(_pattern) => todo!(),
-            }
+            let var_instructions = vec![
+                W::local_get("$arguments"),
+                W::i32_const(i as i32),
+                W::call("$get_arguments_element"),
+            ];
+            let instructions = self.translate_binding(
+                var_instructions,
+                param.variable().binding(),
+                param.variable().init(),
+                VarType::Param,
+            );
+            self.current_function().add_instructions(instructions);
         }
 
         for statement in body.statements() {
@@ -1362,7 +1500,7 @@ impl WasmTranslator {
         );
         let temp = self.current_function().add_local("$temp", WasmType::Anyref);
 
-        instructions.push(W::call("$new_object"));
+        instructions.push(W::call("$create_object"));
         instructions.push(W::local_set(&new_instance));
 
         for property in object_literal.properties() {
@@ -1559,7 +1697,7 @@ impl WasmTranslator {
         ];
 
         vec![
-            W::call("$new_object"),
+            W::call("$create_object"),
             W::local_set(&new_instance),
             ..self.translate_call(
                 new.call(),

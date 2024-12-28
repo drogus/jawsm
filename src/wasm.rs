@@ -227,7 +227,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_promise_prototype() -> Object {
-            let object: Object = new_object();
+            let object: Object = create_object();
 
             set_property(object, data!("then"),
                 create_property_function(global_scope as Scope, Promise_then, null));
@@ -279,7 +279,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_object_prototype() -> Object {
-            let object: Object = new_object();
+            let object: Object = create_object();
 
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, Object_toString, null));
@@ -292,7 +292,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_array_prototype() -> Object {
-            let object: Object = new_object();
+            let object: Object = create_object();
 
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, Array_toString, null));
@@ -321,14 +321,14 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Object_create(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            let object: Object = new_object();
+            let object: Object = create_object();
             object.own_prototype = arguments[0];
             return object;
         }
 
         fn create_error(constructor_offset: i32, message: String) -> Object {
             let constructor: Function = get_variable(global_scope as Scope, constructor_offset) as Function;
-            let new_instance: Object = new_object();
+            let new_instance: Object = create_object();
             call_function(constructor, new_instance, create_arguments_1(message));
 
             new_instance.own_prototype = get_property_value(constructor, data!("prototype"));
@@ -462,7 +462,7 @@ pub fn generate_module() -> WatModule {
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             if len!(arguments) > 0 {
                 if is_null_or_undefined(arguments[1]) {
-                    return new_object();
+                    return create_object();
                 } else if is_object(arguments[1]) {
                     return arguments[1];
                 } else {
@@ -471,7 +471,7 @@ pub fn generate_module() -> WatModule {
                 }
             }
 
-            return new_object();
+            return create_object();
         }
 
         fn Error_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -480,7 +480,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 message = arguments[0];
             }
-            // let new_instance: Object = new_object();
+            // let new_instance: Object = create_object();
             set_property_value(this, data!("message"), message);
             set_property_value(this, data!("name"), new_static_string(data!("Error"), 5));
 
@@ -508,7 +508,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_function_prototype() -> Object {
-            let object: Object = new_object();
+            let object: Object = create_object();
 
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, Function_toString, null));
@@ -547,7 +547,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_number_prototype() -> Object {
-            let object: Object = new_object();
+            let object: Object = create_object();
 
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, Number_toString, null));
@@ -1134,7 +1134,7 @@ pub fn generate_module() -> WatModule {
             };
         }
 
-        fn new_object() -> Object {
+        fn create_object() -> Object {
             return Object {
                 properties: create_propertymap(),
                 own_prototype: global_object_prototype,
@@ -1169,7 +1169,7 @@ pub fn generate_module() -> WatModule {
             };
 
             // TODO: this should also have a constructor set
-            set_property(f, data!("prototype"), create_property(new_object()));
+            set_property(f, data!("prototype"), create_property(create_object()));
 
             return f;
         }
@@ -1367,7 +1367,7 @@ pub fn generate_module() -> WatModule {
 
         fn create_reference_error(name: i32) -> anyref {
             let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
-            let object: Object = new_object();
+            let object: Object = create_object();
             let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 24));
             call_function(constructor, object, arguments);
 
@@ -1636,6 +1636,16 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn get_property_value_str(target: anyref, name: String) -> anyref {
+            let property: Nullable<Property> = get_property_str(target, name);
+
+            if !ref_test!(property, null) {
+                return get_value_of_property(property, target);
+            }
+
+            return null;
+        }
+
         fn get_value_of_property(property_arg: anyref, target: anyref) -> anyref {
             if ref_test!(property_arg, Property) {
                 let property: Property = property_arg as Property;
@@ -1812,6 +1822,131 @@ pub fn generate_module() -> WatModule {
             }
 
             return result;
+        }
+
+        fn clone_interner(interner: Interner) -> Interner {
+            let mut entry: InternedString;
+            let mut new_entry: InternedString;
+            let new_interner: Interner = Interner {
+                entries: [null; interner.length],
+                length: interner.length,
+                current_offset: interner.current_offset
+            };
+            let entries: InternedStringArray = interner.entries;
+            let new_entries: InternedStringArray = new_interner.entries;
+            let mut maybe_entry: Nullable<InternedString>;
+
+            let mut i: i32 = 0;
+            let length: i32 = interner.length;
+            while i < length {
+                maybe_entry = entries[i];
+                if !ref_test!(maybe_entry, null) {
+                    entry = maybe_entry as InternedString;
+                    new_entries[i] = InternedString {
+                        value: entry.value,
+                        offset: entry.offset
+                    };
+                }
+            }
+
+            return new_interner;
+        }
+
+        fn clone_propertymap(map: PropertyMap) -> PropertyMap {
+            let mut entry: PropertyMapEntry;
+            let mut maybe_entry: Nullable<PropertyMapEntry>;
+            let new_propertymap: PropertyMap = PropertyMap {
+                entries: [null; map.size],
+                size: map.size,
+                interner: clone_interner(map.interner)
+            };
+            let entries: PropertyEntriesArray = map.entries;
+            let new_entries: PropertyEntriesArray = new_propertymap.entries;
+
+            let mut i: i32 = 0;
+            let size: i32 = map.size;
+            while i < size {
+                maybe_entry = entries[i];
+                if !ref_test!(maybe_entry, null) {
+                    entry = maybe_entry as PropertyMapEntry;
+                    new_entries[i] = PropertyMapEntry {
+                        key: entry.key,
+                        value: entry.value
+                    };
+                }
+                i+=1;
+            }
+
+            return new_propertymap;
+        }
+
+        fn clone(target: anyref) -> anyref {
+            let mut result: Nullable<Property> = null;
+            let promise: Promise;
+            let function: Function;
+            let object: Object;
+            let property: Property;
+
+            if ref_test!(target, Object) {
+                object = target as Object;
+                return Object {
+                    properties: clone_propertymap(object.properties),
+                    own_prototype: object.own_prototype
+                };
+            } else if ref_test!(target, Function) {
+                function = target as Function;
+                return Function {
+                    scope: function.scope,
+                    func: function.func,
+                    this: function.this,
+                    properties: clone_propertymap(function.properties),
+                    own_prototype: function.own_prototype
+                };
+            } else if ref_test!(target, Promise) {
+                promise = target as Promise;
+            } else if ref_test!(target, GlobalThis) {
+                let global_this: GlobalThis = target as GlobalThis;
+            } else if ref_test!(target, Array) {
+                let array: Array = target as Array;
+            }
+
+            return target;
+        }
+
+        fn coalesce(arg1: anyref, arg2: anyref) -> anyref {
+            if !ref_test!(arg1, null) {
+                return arg1;
+            }
+
+            return arg2;
+        }
+
+        fn get_arguments_element(arguments: JSArgs, i: i32) -> anyref {
+            if i < len!(arguments) {
+                return arguments[i];
+            }
+
+            return null;
+        }
+
+        fn destructure_property_single_name(target: anyref, property_name: i32, var_name: i32, scope: Scope, init: anyref) {
+            let value: anyref = get_property_value(target, property_name);
+            delete_property(target, property_name);
+
+            if ref_test!(value, null) {
+                value = init;
+            }
+            declare_variable(scope, var_name, value, VARIABLE_PARAM);
+        }
+
+        fn destructure_property_single_name_str(target: anyref, property_name: String, var_name: i32, scope: Scope, init: anyref) {
+            let value: anyref = get_property_value_str(target, property_name);
+            delete_property_str(target, property_name);
+
+            if ref_test!(value, null) {
+                value = init;
+            }
+            declare_variable(scope, var_name, value, VARIABLE_PARAM);
         }
 
         fn delete_property(target: anyref, name: i32) {
@@ -2179,6 +2314,7 @@ pub fn generate_module() -> WatModule {
                     i += 1;
                     while i < map.size {
                         entries[i - 1] = entries[i];
+                        i += 1;
                     }
                     map.size = map.size - 1;
                     return;
@@ -2532,7 +2668,7 @@ pub fn generate_module() -> WatModule {
 
             let target_prototype_anyref: anyref = get_property(constructor, data!("prototype"));
             // is it possible to define a local of ref type and not assign anything right away?
-            let mut target_prototype: Object = new_object();
+            let mut target_prototype: Object = create_object();
             let mut prototype: anyref = null;
 
             if ref_test!(target_prototype_anyref, Object) {
