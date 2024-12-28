@@ -2282,7 +2282,7 @@ impl WasmTranslator {
             Statement::Empty => vec![],
             Statement::Expression(expression) => self.translate_expression(expression, false),
             Statement::If(if_statement) => self.translate_if_statement(if_statement),
-            Statement::DoWhileLoop(_do_while_loop) => todo!(),
+            Statement::DoWhileLoop(do_while_loop) => self.translate_do_while_loop(do_while_loop),
             Statement::WhileLoop(while_loop) => self.translate_while_loop(while_loop),
             Statement::ForLoop(for_loop) => self.translate_for_loop(for_loop),
             Statement::ForInLoop(for_in_loop) => self.translate_for_in_loop(for_in_loop),
@@ -2444,6 +2444,39 @@ impl WasmTranslator {
         self.exit_block();
 
         instructions
+    }
+
+    fn translate_do_while_loop(&mut self, do_while_loop: &DoWhileLoop) -> InstructionsList {
+        self.enter_block();
+
+        let condition = self.translate_expression(do_while_loop.cond(), true);
+        let block_instructions = vec![
+            W::local_get("$scope"),
+            W::call("$new_scope"),
+            W::local_set("$scope"),
+            W::block(
+                self.current_continue_block_name(),
+                Signature::default(),
+                self.translate_statement(do_while_loop.body()),
+            ),
+            W::local_get("$scope"),
+            W::call("$extract_parent_scope"),
+            W::local_set("$scope"),
+            ..condition,
+            W::call("$cast_ref_to_i32_bool"),
+            W::i32_eqz(),
+            W::br_if(self.current_loop_break_name()),
+            W::br(self.current_loop_name()),
+        ];
+
+        vec![W::r#loop(
+            self.current_loop_name(),
+            vec![W::block(
+                self.current_loop_break_name(),
+                Signature::default(),
+                block_instructions,
+            )],
+        )]
     }
 
     fn translate_while_loop(&mut self, while_loop: &WhileLoop) -> InstructionsList {
