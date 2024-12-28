@@ -456,7 +456,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_array(0);
+            return create_array(0);
         }
 
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -1151,7 +1151,7 @@ pub fn generate_module() -> WatModule {
             };
         }
 
-        fn new_array(size: i32) -> Array {
+        fn create_array(size: i32) -> Array {
             return Array {
                 array: [null; size],
                 properties: create_propertymap(),
@@ -1921,12 +1921,83 @@ pub fn generate_module() -> WatModule {
             return arg2;
         }
 
+        fn get_array_rest(obj: anyref, i: i32) -> anyref {
+            let mut j: i32 = i;
+            let length: i32;
+            if ref_test!(obj, Array) {
+                let array: AnyrefArray = (obj as Array).array;
+                length = len!(array);
+                if i < length {
+                    let new_array: Array = create_array(length - i);
+                    let new_array_array: AnyrefArray = new_array.array;
+                    while j < length {
+                        new_array_array[j - i] = array[j];
+                        j += 1;
+                    }
+
+                    return new_array;
+                }
+            }
+
+            return create_array(0);
+        }
+
+        fn get_array_element(obj: anyref, i: i32) -> anyref {
+            if ref_test!(obj, Array) {
+                let array: AnyrefArray = (obj as Array).array;
+                if i < len!(array) {
+                    return array[i];
+                }
+            }
+
+            return null;
+        }
+
         fn get_arguments_element(arguments: JSArgs, i: i32) -> anyref {
             if i < len!(arguments) {
                 return arguments[i];
             }
 
             return null;
+        }
+
+        fn get_property_or_array_value(target: anyref, prop_name: anyref) -> anyref {
+            if ref_test!(target, Array) {
+                if ref_test!(prop_name, Number) {
+                    // TODO: this will cast to i32, which will essentially get rid of the
+                    // fraction. In case the Number is *not* an integer it shouldn't be treated as
+                    // an index, but with current implementation it will
+                    return get_array_element(target, (prop_name as Number).value as i32);
+                } else {
+                    return get_property_value_str(target, to_string(prop_name));
+                }
+            } else if is_object(target) {
+                return get_property_value_str(target, to_string(prop_name));
+            }
+
+            return null;
+        }
+
+        fn set_property_or_array_value(target: anyref, prop_name: anyref, value: anyref) {
+            if ref_test!(target, Array) {
+                if ref_test!(prop_name, Number) {
+                    // TODO: this will cast to i32, which will essentially get rid of the
+                    // fraction. In case the Number is *not* an integer it shouldn't be treated as
+                    // an index, but with current implementation it will
+                    set_array_element(target, (prop_name as Number).value as i32, value);
+                    return;
+                } else {
+                    return set_property_value_str(target, to_string(prop_name), value);
+                    return;
+                }
+            } else if is_object(target) {
+                set_property_value_str(target, to_string(prop_name), value);
+                return;
+            }
+        }
+
+        fn set_array_element(target: anyref, index: i32, value: anyref) {
+            throw!(JSException, create_string_from_array("not implemented: set_array_element"));
         }
 
         fn destructure_property_single_name(target: anyref, property_name: i32, var_name: i32, scope: Scope, init: anyref) {

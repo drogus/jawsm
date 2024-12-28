@@ -360,7 +360,90 @@ impl WasmTranslator {
                     }
                 }
             }
-            Pattern::Array(array_pattern) => todo!(),
+            Pattern::Array(array_pattern) => {
+                for (i, element) in array_pattern.bindings().iter().enumerate() {
+                    match element {
+                        boa_ast::pattern::ArrayPatternElement::Elision => {}
+                        boa_ast::pattern::ArrayPatternElement::SingleName {
+                            ident,
+                            default_init,
+                        } => {
+                            let init = if let Some(init) = default_init {
+                                self.translate_expression(init, true)
+                            } else {
+                                vec![W::ref_null_any()]
+                            };
+                            let offset = self.add_identifier(ident);
+                            result.append(&mut vec![
+                                W::local_get("$scope"),
+                                W::I32Const(offset),
+                                W::local_get(&current_argument),
+                                W::I32Const(i as i32),
+                                W::call("$get_array_element"),
+                                ..init,
+                                W::call("$coalesce"),
+                                W::I32Const(var_type.to_i32()),
+                                W::call("$declare_variable"),
+                            ]);
+                        }
+                        boa_ast::pattern::ArrayPatternElement::PropertyAccess {
+                            access,
+                            default_init,
+                        } => todo!(),
+                        boa_ast::pattern::ArrayPatternElement::Pattern {
+                            pattern,
+                            default_init,
+                        } => {
+                            let assign = if let Some(init) = default_init {
+                                self.translate_expression(init, true)
+                            } else {
+                                vec![W::ref_null_any()]
+                            };
+
+                            let var_instructions = vec![
+                                W::local_get(&current_argument),
+                                W::I32Const(i as i32),
+                                W::call("$get_array_element"),
+                            ];
+
+                            result.append(&mut self.translate_pattern(
+                                var_instructions,
+                                assign,
+                                pattern,
+                                var_type.clone(),
+                            ));
+                        }
+                        boa_ast::pattern::ArrayPatternElement::SingleNameRest { ident } => {
+                            let offset = self.add_identifier(ident);
+                            result.append(&mut vec![
+                                W::local_get("$scope"),
+                                W::I32Const(offset),
+                                W::local_get(&current_argument),
+                                W::I32Const(i as i32),
+                                W::call("$get_array_rest"),
+                                W::I32Const(var_type.to_i32()),
+                                W::call("$declare_variable"),
+                            ]);
+                        }
+                        boa_ast::pattern::ArrayPatternElement::PropertyAccessRest { access } => {
+                            todo!()
+                        }
+                        boa_ast::pattern::ArrayPatternElement::PatternRest { pattern } => {
+                            let var_instructions = vec![
+                                W::local_get(&current_argument),
+                                W::I32Const(i as i32),
+                                W::call("$get_array_rest"),
+                            ];
+                            result.append(&mut self.translate_pattern(
+                                var_instructions,
+                                vec![W::ref_null_any()],
+                                pattern,
+                                var_type.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         result
@@ -794,9 +877,10 @@ impl WasmTranslator {
                         let target_local = self
                             .current_function()
                             .add_local("$target", WasmType::Anyref);
-                        let mut instructions = self.translate_expression(expression, true);
-                        instructions.push(W::local_tee(&target_local));
-                        instructions.push(W::call("$to_string"));
+                        let mut instructions = vec![
+                            ..self.translate_expression(expression, true),
+                            W::local_tee(&target_local),
+                        ];
 
                         if let Some(mut assign_instructions) = assign {
                             let temp = self.current_function().add_local("$temp", WasmType::Anyref);
@@ -804,13 +888,11 @@ impl WasmTranslator {
                             result.append(&mut target);
                             result.append(&mut instructions);
                             result.append(&mut assign_instructions);
-                            result.append(&mut vec![W::call("$set_property_value_str")]);
+                            result.append(&mut vec![W::call("$set_property_or_array_value")]);
                             result
                         } else {
                             target.append(&mut instructions);
-                            target.push(W::call("$get_property_str"));
-                            target.push(W::local_get(&target_local));
-                            target.push(W::call("$get_value_of_property"));
+                            target.push(W::call("$get_property_or_array_value"));
                             target
                         }
                     }
@@ -1451,7 +1533,7 @@ impl WasmTranslator {
         let array = array_literal.as_ref();
         let mut instructions = vec![
             W::i32_const(array.len() as i32),
-            W::call("$new_array"),
+            W::call("$create_array"),
             W::local_set(&array_var),
             W::local_get(&array_var),
             W::struct_get("$Array", "$array"),
