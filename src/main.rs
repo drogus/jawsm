@@ -2229,7 +2229,12 @@ impl WasmTranslator {
                         W::call("$declare_variable"),
                     ]
                 }
-                Binding::Pattern(_) => todo!(),
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    vec![W::local_get(&current)],
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(VarType::Var),
+                ),
             },
             IterableLoopInitializer::Let(binding) => match binding {
                 Binding::Identifier(identifier) => {
@@ -2243,7 +2248,12 @@ impl WasmTranslator {
                         W::call("$declare_variable"),
                     ]
                 }
-                Binding::Pattern(_) => todo!(),
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    vec![W::local_get(&current)],
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(VarType::Let),
+                ),
             },
             IterableLoopInitializer::Const(binding) => match binding {
                 Binding::Identifier(identifier) => {
@@ -2257,9 +2267,19 @@ impl WasmTranslator {
                         W::call("$declare_variable"),
                     ]
                 }
-                Binding::Pattern(_) => todo!(),
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    vec![W::local_get(&current)],
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(VarType::Const),
+                ),
             },
-            IterableLoopInitializer::Pattern(_) => todo!(),
+            IterableLoopInitializer::Pattern(pattern) => self.translate_pattern(
+                vec![W::local_get(&current)],
+                vec![W::ref_null_any()],
+                pattern,
+                None,
+            ),
         };
 
         let block_instructions = vec![
@@ -2353,7 +2373,12 @@ impl WasmTranslator {
                         W::call("$declare_variable"),
                     ]
                 }
-                Binding::Pattern(_) => todo!(),
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    vec![W::local_get(&current)],
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(VarType::Var),
+                ),
             },
             IterableLoopInitializer::Let(binding) => match binding {
                 Binding::Identifier(identifier) => {
@@ -2367,7 +2392,12 @@ impl WasmTranslator {
                         W::call("$declare_variable"),
                     ]
                 }
-                Binding::Pattern(_) => todo!(),
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    vec![W::local_get(&current)],
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(VarType::Let),
+                ),
             },
             IterableLoopInitializer::Const(binding) => match binding {
                 Binding::Identifier(identifier) => {
@@ -2381,9 +2411,19 @@ impl WasmTranslator {
                         W::call("$declare_variable"),
                     ]
                 }
-                Binding::Pattern(_) => todo!(),
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    vec![W::local_get(&current)],
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(VarType::Const),
+                ),
             },
-            IterableLoopInitializer::Pattern(_) => todo!(),
+            IterableLoopInitializer::Pattern(pattern) => self.translate_pattern(
+                vec![W::local_get(&current)],
+                vec![W::ref_null_any()],
+                pattern,
+                None,
+            ),
         };
 
         let block_instructions = vec![
