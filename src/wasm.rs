@@ -2231,24 +2231,32 @@ pub fn generate_module() -> WatModule {
             throw!(JSException, create_string_from_array("not implemented: set_array_element"));
         }
 
-        fn destructure_property_single_name(target: anyref, property_name: i32, var_name: i32, scope: Scope, init: anyref) {
+        fn destructure_property_single_name(target: anyref, property_name: i32, var_name: i32, scope: Scope, init: anyref, var_type_index: i32) {
             let value: anyref = get_property_value(target, property_name);
             delete_property(target, property_name);
 
             if ref_test!(value, null) {
                 value = init;
             }
-            declare_variable(scope, var_name, value, VARIABLE_PARAM);
+            if var_type_index == -1 {
+                assign_variable(scope, var_name, value);
+            } else {
+                declare_variable(scope, var_name, value, var_type_index);
+            }
         }
 
-        fn destructure_property_single_name_str(target: anyref, property_name: String, var_name: i32, scope: Scope, init: anyref) {
+        fn destructure_property_single_name_str(target: anyref, property_name: String, var_name: i32, scope: Scope, init: anyref, var_type_index: i32) {
             let value: anyref = get_property_value_str(target, property_name);
             delete_property_str(target, property_name);
 
             if ref_test!(value, null) {
                 value = init;
             }
-            declare_variable(scope, var_name, value, VARIABLE_PARAM);
+            if var_type_index == -1 {
+                assign_variable(scope, var_name, value);
+            } else {
+                declare_variable(scope, var_name, value, var_type_index);
+            }
         }
 
         fn delete_property(target: anyref, name: i32) {
