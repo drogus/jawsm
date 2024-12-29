@@ -1884,11 +1884,31 @@ impl WasmTranslator {
 
     fn translate_update(&mut self, update: &Update) -> InstructionsList {
         use boa_ast::expression::operator::update::UpdateOp;
-        let identifier = match update.target() {
-            UpdateTarget::Identifier(identifier) => identifier,
-            UpdateTarget::PropertyAccess(_property_access) => todo!(),
-        };
+
         let var = self.current_function().add_local("$var", WasmType::Anyref);
+
+        let fetch_instructions = match update.target() {
+            UpdateTarget::Identifier(identifier) => self.translate_identifier(identifier),
+            UpdateTarget::PropertyAccess(property_access) => {
+                self.translate_property_access(property_access, None)
+            }
+        };
+
+        let save_instructions = match update.target() {
+            UpdateTarget::Identifier(identifier) => {
+                let offset = self.add_identifier(identifier);
+                vec![
+                    W::local_get("$scope".to_string()),
+                    W::i32_const(offset),
+                    W::local_get(&var),
+                    W::call("$assign_variable"),
+                ]
+            }
+            UpdateTarget::PropertyAccess(property_access) => {
+                let assign = vec![W::local_get(&var)];
+                self.translate_property_access(property_access, Some(assign))
+            }
+        };
 
         // TODO: figure out pre vs post behaviour
         let instruction = match update.op() {
@@ -1897,20 +1917,13 @@ impl WasmTranslator {
             UpdateOp::DecrementPost => W::call("$decrement_number"),
             UpdateOp::DecrementPre => W::call("$decrement_number"),
         };
-        let mut target = self.translate_identifier(identifier);
-        let offset = self.add_identifier(identifier);
-        let mut assign_variable = vec![
-            W::local_get("$scope".to_string()),
-            W::i32_const(offset),
-            W::local_get(&var),
-            W::call("$assign_variable"),
-        ];
 
-        let mut result = vec![];
-        result.append(&mut target);
-        result.append(&mut vec![instruction, W::local_set(&var)]);
-        result.append(&mut assign_variable);
-        result
+        vec![
+            ..fetch_instructions,
+            instruction,
+            W::local_set(&var),
+            ..save_instructions,
+        ]
     }
 
     fn translate_assign(&mut self, assign: &Assign) -> InstructionsList {
