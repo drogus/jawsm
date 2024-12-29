@@ -764,24 +764,32 @@ impl WasmTranslator {
         let mut instructions = Vec::new();
         // TODO: handle hoisting
         for var in variable_list.as_ref() {
-            match var.binding() {
+            let init_instructions = if let Some(expression) = var.init() {
+                self.translate_expression(expression, true)
+            } else {
+                vec![W::ref_null_any()]
+            };
+            let mut instr = match var.binding() {
                 Binding::Identifier(identifier) => {
                     let offset = self.add_identifier(identifier);
-                    if let Some(expression) = var.init() {
-                        instructions.append(&mut self.translate_expression(expression, true));
-                    } else {
-                        instructions.push(W::ref_null_any());
-                    }
-                    instructions.push(W::local_set(&var_name));
-
-                    instructions.push(W::local_get("$scope"));
-                    instructions.push(W::i32_const(offset));
-                    instructions.push(W::local_get(&var_name));
-                    instructions.push(W::i32_const(var_type.to_i32()));
-                    instructions.push(W::call("$declare_variable"));
+                    vec![
+                        ..init_instructions,
+                        W::local_set(&var_name),
+                        W::local_get("$scope"),
+                        W::i32_const(offset),
+                        W::local_get(&var_name),
+                        W::i32_const(var_type.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
                 }
-                Binding::Pattern(pattern) => todo!(),
-            }
+                Binding::Pattern(pattern) => self.translate_pattern(
+                    init_instructions,
+                    vec![W::ref_null_any()],
+                    pattern,
+                    Some(var_type.clone()),
+                ),
+            };
+            instructions.append(&mut instr);
         }
 
         instructions
