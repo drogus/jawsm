@@ -2584,9 +2584,9 @@ impl WasmTranslator {
         use boa_ast::declaration::Binding;
         let mut catch_instr = if let Some(catch) = catch {
             let mut binding_instr = if let Some(binding) = catch.parameter() {
+                let temp = self.current_function().add_local("$temp", WasmType::Anyref);
                 match binding {
                     Binding::Identifier(identifier) => {
-                        let temp = self.current_function().add_local("$temp", WasmType::Anyref);
                         let offset = self.add_identifier(identifier);
                         vec![
                             W::local_set(&temp),
@@ -2597,7 +2597,15 @@ impl WasmTranslator {
                             W::call("$declare_variable"),
                         ]
                     }
-                    Binding::Pattern(_) => todo!(),
+                    Binding::Pattern(pattern) => vec![
+                        W::local_set(&temp),
+                        ..self.translate_pattern(
+                            vec![W::local_get(&temp)],
+                            vec![W::ref_null_any()],
+                            pattern,
+                            Some(VarType::Param),
+                        ),
+                    ],
                 }
             } else {
                 vec![W::drop()]
