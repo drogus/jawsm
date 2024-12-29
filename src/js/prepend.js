@@ -3,12 +3,28 @@ Error.prototype.toString = function () {
   return this.name + ": " + this.message;
 };
 
-// // Test it
-// try {
-//   throw new ReferenceError("test");
-// } catch (e) {
-//   // console.log(e instanceof Error); // true
-//   // console.log(e instanceof ReferenceError); // true
-//   console.log(e.toString()); // "ReferenceError: test"
-//   // console.log(e.stack); // Shows stack trace
-// }
+Object.defineProperty(Array.prototype, Symbol.iterator, {
+  value: function() {
+    let i = 0;
+    let arr = this;
+
+    const iterator = {
+      next() {
+        let result;
+        if (i < arr.length - 1) {
+          result = { value: arr[i], done: false };
+          i += 1;
+          return result;
+        } else if (i == arr.length) {
+          return { done: true };
+        }
+
+        result = { value: arr[i], done: true };
+        i += 1;
+        return result;
+      },
+    };
+
+    return iterator;
+  }
+});

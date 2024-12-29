@@ -165,6 +165,7 @@ pub fn generate_module() -> WatModule {
 
         struct Array {
             array: mut AnyrefArray,
+            length: i32,
             properties: mut PropertyMap,
             own_prototype: mut anyref,
         }
@@ -324,6 +325,13 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Array_constructor, null));
 
+            let length_getter: Function = new_function(global_scope as Scope, Array_length, null);
+            set_property(object, data!("length"),
+                Property {
+                    value: AccessorMethod { get: length_getter, set: null },
+                    flags: PROPERTY_IS_GETTER // TODO: Check if we need any other flags here
+                });
+
             object.own_prototype = global_object_prototype as Object;
             return object;
         }
@@ -389,7 +397,12 @@ pub fn generate_module() -> WatModule {
                 throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Object.defineProprty called on non-object")));
             }
 
-            let existing_property: Nullable<Property> = get_own_property_str(target, arguments[1]);
+            let existing_property: Nullable<Property>;
+            if ref_test!(arguments[1], Symbol) {
+                existing_property = get_own_property_sym(target, arguments[1] as Symbol);
+            } else {
+                existing_property = get_own_property_str(target, arguments[1]);
+            }
             if !ref_test!(existing_property, null) {
                 if (existing_property as Property).flags & PROPERTY_CONFIGURABLE == 0 {
                     throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Cannot redefine non-reconfigurable property")));
@@ -454,7 +467,11 @@ pub fn generate_module() -> WatModule {
                 property.flags = property.flags | PROPERTY_WRITABLE;
             }
 
-            set_property_str(target, arguments[1], property);
+            if ref_test!(arguments[1], Symbol) {
+                set_property_sym(target, arguments[1] as Symbol, property);
+            } else {
+                set_property_str(target, arguments[1], property);
+            }
 
             return target;
         }
@@ -486,6 +503,37 @@ pub fn generate_module() -> WatModule {
             }
 
             return 0;
+        }
+
+        fn get_iterator(target: anyref) -> anyref {
+            // TODO: handle lack of iterator or iterator not being a function
+            let iterator_func: Function = get_property_value_sym(target, symbol_iterator) as Function;
+            return call_function(iterator_func, null, create_arguments_0());
+        }
+
+        fn get_iterator_next(iterator: anyref) -> anyref {
+            // TODO: handle next not being a function
+            let next_func: Function = get_property_value(iterator, data!("next")) as Function;
+            let result: anyref = call_function(next_func, null, create_arguments_0());
+
+            return result;
+        }
+
+        fn is_iterator_done(result: anyref) -> i32 {
+            let done: anyref = get_property_value(result, data!("done"));
+
+            return js_is_true(done);
+        }
+
+        fn get_iterator_result_value(result: anyref) -> anyref {
+            return get_property_value(result, data!("value"));
+        }
+
+        fn Array_length(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: can this be anything else?
+            let array: Array = this as Array;
+
+            return new_number(array.length as f64);
         }
 
         fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -1193,6 +1241,7 @@ pub fn generate_module() -> WatModule {
         fn create_array(size: i32) -> Array {
             return Array {
                 array: [null; size],
+                length: size,
                 properties: create_propertymap(),
                 own_prototype: global_array_prototype
             };
@@ -1662,6 +1711,28 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
+        fn get_own_property_sym(target: anyref, key: Symbol) -> Nullable<Property> {
+            let mut result: Nullable<Property> = null;
+            let property: Property;
+
+            let properties: Nullable<PropertyMap> = get_propertymap(target);
+            if !ref_test!(properties, null) {
+                result = propertymap_get_sym(properties as PropertyMap, key);
+            }
+
+            if ref_test!(result, null) {
+                return null as Nullable<Property>;
+            }
+
+            // at this point the result has to be a property
+            let property = result as Property;
+            if ref_test!(property.value, Function) {
+                (property.value as Function).this = target;
+            }
+
+            return result;
+        }
+
         fn get_own_property_str(target: anyref, name: anyref) -> Nullable<Property> {
             let offset: i32;
 
@@ -1819,12 +1890,12 @@ pub fn generate_module() -> WatModule {
                     return;
                 }
 
-                // TODO: need to implement this
-                // if ref_test!(target, GlobalThis) {
-                //     let key: i32 = propertymap_set_sym((target as GlobalThis).properties, key, value_property);
-                //     declare_variable(global_scope as Scope, key, value_property.value, VARIABLE_VAR);
-                //     return;
-                // }
+                if ref_test!(target, GlobalThis) {
+                    propertymap_set_sym((target as GlobalThis).properties, key, value_property);
+                    // TODO: need to implement this
+                    // eclare_variable(global_scope as Scope, key, value_property.value, VARIABLE_VAR);
+                    return;
+                }
             } else {
                 value_property = property as Property;
                 if value_property.flags & PROPERTY_IS_SETTER != 0 {
@@ -1895,11 +1966,7 @@ pub fn generate_module() -> WatModule {
 
         fn get_own_property(target: anyref, name: i32) -> Nullable<Property> {
             let mut result: Nullable<Property> = null;
-            let promise: Promise;
-            let function: Function;
-            let object: Object;
             let property: Property;
-            let global_this: GlobalThis;
 
             let properties: Nullable<PropertyMap> = get_propertymap(target);
             if !ref_test!(properties, null) {
@@ -2210,6 +2277,37 @@ pub fn generate_module() -> WatModule {
             } else if ref_test!(target, Number) {
                 // do nothing?
             }
+        }
+
+        fn set_property_sym(target: anyref, key: Symbol, property: Property) {
+            if ref_test!(target, Object) {
+                propertymap_set_sym((target as Object).properties, key, property);
+                return;
+            }
+
+            if ref_test!(target, Function) {
+                propertymap_set_sym((target as Function).properties, key, property);
+                return;
+            }
+
+            if ref_test!(target, Promise) {
+                propertymap_set_sym((target as Promise).properties, key, property);
+                return;
+            }
+
+            if ref_test!(target, Array) {
+                propertymap_set_sym((target as Array).properties, key, property);
+                return;
+            }
+
+            if ref_test!(target, GlobalThis) {
+                propertymap_set_sym((target as GlobalThis).properties, key, property);
+                // TODO: implement this
+                // declare_variable(global_scope as Scope, key, property.value, VARIABLE_VAR);
+            return;
+             }
+
+            throw!(JSException, 9999101 as i31ref);
         }
 
         fn set_property_str(target: anyref, name: anyref, property: Property) {

@@ -2074,7 +2074,131 @@ impl WasmTranslator {
         (offset as i32, length as i32)
     }
 
+    fn translate_for_of_loop(&mut self, for_of_loop: &ForOfLoop) -> InstructionsList {
+        self.enter_block();
+
+        use boa_ast::declaration::Binding;
+        use boa_ast::statement::iteration::IterableLoopInitializer;
+        let target = self.translate_expression(for_of_loop.iterable(), true);
+
+        let current = self
+            .current_function()
+            .add_local("$current", WasmType::Anyref);
+        let iterator = self
+            .current_function()
+            .add_local("$iterator", WasmType::Anyref);
+        let iterator_result = self
+            .current_function()
+            .add_local("$iterator-result", WasmType::Anyref);
+
+        let initializer = match for_of_loop.initializer() {
+            IterableLoopInitializer::Identifier(identifier) => {
+                vec![
+                    W::local_get("$scope"),
+                    W::I32Const(identifier.sym().get() as i32),
+                    W::local_get(&current),
+                    W::call("$assign_variable"),
+                ]
+            }
+            IterableLoopInitializer::Access(property_access) => {
+                self.translate_property_access(property_access, Some(vec![W::local_get(&current)]))
+            }
+            IterableLoopInitializer::Var(var) => match var.binding() {
+                Binding::Identifier(identifier) => {
+                    let s = self.interner.resolve(identifier.sym()).unwrap().to_string();
+                    let (offset, _) = self.insert_data_string(&s);
+                    vec![
+                        W::local_get("$scope"),
+                        W::I32Const(offset),
+                        W::local_get(&current),
+                        W::i32_const(VarType::Var.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
+                }
+                Binding::Pattern(_) => todo!(),
+            },
+            IterableLoopInitializer::Let(binding) => match binding {
+                Binding::Identifier(identifier) => {
+                    let s = self.interner.resolve(identifier.sym()).unwrap().to_string();
+                    let (offset, _) = self.insert_data_string(&s);
+                    vec![
+                        W::local_get("$scope"),
+                        W::I32Const(offset),
+                        W::local_get(&current),
+                        W::i32_const(VarType::Let.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
+                }
+                Binding::Pattern(_) => todo!(),
+            },
+            IterableLoopInitializer::Const(binding) => match binding {
+                Binding::Identifier(identifier) => {
+                    let s = self.interner.resolve(identifier.sym()).unwrap().to_string();
+                    let (offset, _) = self.insert_data_string(&s);
+                    vec![
+                        W::local_get("$scope"),
+                        W::I32Const(offset),
+                        W::local_get(&current),
+                        W::i32_const(VarType::Const.to_i32()),
+                        W::call("$declare_variable"),
+                    ]
+                }
+                Binding::Pattern(_) => todo!(),
+            },
+            IterableLoopInitializer::Pattern(_) => todo!(),
+        };
+
+        let block_instructions = vec![
+            // set up new scope
+            W::local_get("$scope"),
+            W::call("$new_scope"),
+            W::local_set("$scope"),
+            // set up the current element
+            W::local_get(&iterator),
+            W::call("$get_iterator_next"),
+            W::local_tee(&iterator_result),
+            W::call("$get_iterator_result_value"),
+            W::local_set(&current),
+            // execute variable initializer
+            ..initializer,
+            // when using continue, we can't skip all the initialization and
+            // scope manipulation parts
+            W::block(
+                self.current_continue_block_name(),
+                Signature::default(),
+                self.translate_statement(for_of_loop.body()),
+            ),
+            // check if we're done
+            W::local_get(&iterator_result),
+            W::call("$is_iterator_done"),
+            W::br_if(self.current_loop_break_name()),
+            // scope cleanup
+            W::local_get("$scope"),
+            W::call("$extract_parent_scope"),
+            W::local_set("$scope"),
+            W::br(self.current_loop_name()),
+        ];
+
+        let result = vec![
+            ..target,
+            W::call("$get_iterator"),
+            W::local_set(&iterator),
+            W::r#loop(
+                self.current_loop_name(),
+                vec![W::block(
+                    self.current_loop_break_name(),
+                    Signature::default(),
+                    block_instructions,
+                )],
+            ),
+        ];
+
+        self.exit_block();
+
+        result
+    }
     fn translate_for_in_loop(&mut self, for_in_loop: &ForInLoop) -> InstructionsList {
+        // TODO: current for..in implementation ignores array indexes at the moment
         self.enter_block();
 
         use boa_ast::declaration::Binding;
@@ -2286,7 +2410,7 @@ impl WasmTranslator {
             Statement::WhileLoop(while_loop) => self.translate_while_loop(while_loop),
             Statement::ForLoop(for_loop) => self.translate_for_loop(for_loop),
             Statement::ForInLoop(for_in_loop) => self.translate_for_in_loop(for_in_loop),
-            Statement::ForOfLoop(_for_of_loop) => todo!(),
+            Statement::ForOfLoop(for_of_loop) => self.translate_for_of_loop(for_of_loop),
             Statement::Switch(switch) => self.translate_switch_statement(switch),
             Statement::Continue(_) => vec![W::br(self.current_continue_block_name())],
             Statement::Break(_) => vec![W::br(self.current_loop_break_name())],
