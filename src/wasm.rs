@@ -2884,6 +2884,11 @@ pub fn generate_module() -> WatModule {
             return 1 as i31ref;
         }
 
+        fn bind_this(function: Function, this: anyref) -> Function {
+            function.this = this;
+            return function;
+        }
+
         fn strict_equal(arg1: anyref, arg2: anyref) -> i31ref {
             let mut i: i32 = 0;
             let mut len: i32 = 0;

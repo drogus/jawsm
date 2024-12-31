@@ -1588,7 +1588,6 @@ impl WasmTranslator {
             true,
         );
 
-        // println!("{}", outer_function.to_interned_string(&self.interner));
         self.translate_function(&outer_function)
     }
 
@@ -1879,7 +1878,15 @@ impl WasmTranslator {
     }
 
     fn translate_arrow_function(&mut self, function: &ArrowFunction) -> InstructionsList {
-        self.translate_function_generic(function.name(), function.parameters(), function.body())
+        vec![
+            ..self.translate_function_generic(
+                function.name(),
+                function.parameters(),
+                function.body(),
+            ),
+            W::local_get("$this"),
+            W::call("$bind_this"),
+        ]
     }
 
     fn translate_update(&mut self, update: &Update) -> InstructionsList {
