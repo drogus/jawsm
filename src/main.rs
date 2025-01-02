@@ -43,30 +43,14 @@ use std::{
 };
 use velcro::vec;
 
-use jawsm::tail_call_transformer::TailCallTransformer;
+use jawsm::VarType;
+use jawsm::{
+    hoisting_transformer::HoistingTransformer, tail_call_transformer::TailCallTransformer,
+};
 use tarnik_ast::{
     Global, InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W,
     WatModule,
 };
-
-#[derive(Clone)]
-enum VarType {
-    Const,
-    Let,
-    Var,
-    Param,
-}
-
-impl VarType {
-    fn to_i32(&self) -> i32 {
-        match self {
-            VarType::Const => 0b00000001,
-            VarType::Let => 0b00000010,
-            VarType::Var => 0b00000100,
-            VarType::Param => 0b00001000,
-        }
-    }
-}
 
 fn drop_if_no_use(mut instructions: InstructionsList, will_use_return: bool) -> InstructionsList {
     if !will_use_return {
@@ -634,7 +618,6 @@ impl WasmTranslator {
     }
 
     fn translate_var(&mut self, decl: &VarDeclaration) -> InstructionsList {
-        // println!("LET: {:#?}", decl.0);
         // TODO: variables behave a bit differently when it comes to hoisting
         // for now I just ignore it, but it should be fixed
         // https://developer.mozilla.org/en-US/docs/Glossary/Hoisting
@@ -759,10 +742,7 @@ impl WasmTranslator {
     ) -> InstructionsList {
         use boa_ast::declaration::Binding;
 
-        let var_name = self.current_function().add_local("$var", WasmType::Anyref);
-
         let mut instructions = Vec::new();
-        // TODO: handle hoisting
         for var in variable_list.as_ref() {
             let init_instructions = if let Some(expression) = var.init() {
                 self.translate_expression(expression, true)
@@ -773,11 +753,9 @@ impl WasmTranslator {
                 Binding::Identifier(identifier) => {
                     let offset = self.add_identifier(identifier);
                     vec![
-                        ..init_instructions,
-                        W::local_set(&var_name),
                         W::local_get("$scope"),
                         W::i32_const(offset),
-                        W::local_get(&var_name),
+                        ..init_instructions,
                         W::i32_const(var_type.to_i32()),
                         W::call("$declare_variable"),
                     ]
@@ -1878,14 +1856,23 @@ impl WasmTranslator {
     }
 
     fn translate_arrow_function(&mut self, function: &ArrowFunction) -> InstructionsList {
+        let bind_instructions = if self
+            .current_function()
+            .params
+            .iter()
+            .any(|(maybe_name, _)| maybe_name.as_ref().map(|n| n == "$this").unwrap_or(false))
+        {
+            vec![W::local_get("$this"), W::call("$bind_this")]
+        } else {
+            vec![W::global_get("$global_this"), W::call("$bind_this")]
+        };
         vec![
             ..self.translate_function_generic(
                 function.name(),
                 function.parameters(),
                 function.body(),
             ),
-            W::local_get("$this"),
-            W::call("$bind_this"),
+            ..bind_instructions,
         ]
     }
 
@@ -2166,7 +2153,7 @@ impl WasmTranslator {
                 let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
                 result.append(&mut declaration);
                 result.append(&mut vec![
-                    W::i32_const(VarType::Var.to_i32()),
+                    W::i32_const(VarType::Function.to_i32()),
                     W::call("$declare_variable".to_string()),
                 ]);
                 result
@@ -2210,6 +2197,10 @@ impl WasmTranslator {
 
     fn translate_for_of_loop(&mut self, for_of_loop: &ForOfLoop) -> InstructionsList {
         self.enter_block();
+
+        let current_loop_break_name = self.current_loop_break_name();
+        let current_continue_block_name = self.current_continue_block_name();
+        let current_loop_name = self.current_loop_name();
 
         use boa_ast::declaration::Binding;
         use boa_ast::statement::iteration::IterableLoopInitializer;
@@ -2318,19 +2309,19 @@ impl WasmTranslator {
             // when using continue, we can't skip all the initialization and
             // scope manipulation parts
             W::block(
-                self.current_continue_block_name(),
+                &current_continue_block_name,
                 Signature::default(),
                 self.translate_statement(for_of_loop.body()),
             ),
             // check if we're done
             W::local_get(&iterator_result),
             W::call("$is_iterator_done"),
-            W::br_if(self.current_loop_break_name()),
+            W::br_if(&current_loop_break_name),
             // scope cleanup
             W::local_get("$scope"),
             W::call("$extract_parent_scope"),
             W::local_set("$scope"),
-            W::br(self.current_loop_name()),
+            W::br(&current_loop_name),
         ];
 
         let result = vec![
@@ -2338,9 +2329,9 @@ impl WasmTranslator {
             W::call("$get_iterator"),
             W::local_set(&iterator),
             W::r#loop(
-                self.current_loop_name(),
+                &current_loop_name,
                 vec![W::block(
-                    self.current_loop_break_name(),
+                    &current_loop_break_name,
                     Signature::default(),
                     block_instructions,
                 )],
@@ -2354,6 +2345,10 @@ impl WasmTranslator {
     fn translate_for_in_loop(&mut self, for_in_loop: &ForInLoop) -> InstructionsList {
         // TODO: current for..in implementation ignores array indexes at the moment
         self.enter_block();
+
+        let current_loop_break_name = self.current_loop_break_name();
+        let current_continue_block_name = self.current_continue_block_name();
+        let current_loop_name = self.current_loop_name();
 
         use boa_ast::declaration::Binding;
         use boa_ast::statement::iteration::IterableLoopInitializer;
@@ -2455,7 +2450,7 @@ impl WasmTranslator {
             W::local_get(&i),
             W::local_get(&length),
             W::I32GeS,
-            W::br_if(self.current_loop_break_name()),
+            W::br_if(&current_loop_break_name),
             // set up the current element
             W::local_get(&properties),
             W::local_get(&i),
@@ -2466,7 +2461,7 @@ impl WasmTranslator {
             // when using continue, we can't skip all the initialization and
             // scope manipulation parts
             W::block(
-                self.current_continue_block_name(),
+                &current_continue_block_name,
                 Signature::default(),
                 self.translate_statement(for_in_loop.body()),
             ),
@@ -2478,7 +2473,7 @@ impl WasmTranslator {
             W::local_get("$scope"),
             W::call("$extract_parent_scope"),
             W::local_set("$scope"),
-            W::br(self.current_loop_name()),
+            W::br(&current_loop_name),
         ];
 
         let result = vec![
@@ -2490,9 +2485,9 @@ impl WasmTranslator {
             W::I32Const(0),
             W::local_set(&i),
             W::r#loop(
-                self.current_loop_name(),
+                &current_loop_name,
                 vec![W::block(
-                    self.current_loop_break_name(),
+                    &current_loop_break_name,
                     Signature::default(),
                     block_instructions,
                 )],
@@ -2506,6 +2501,10 @@ impl WasmTranslator {
 
     fn translate_for_loop(&mut self, for_loop: &ForLoop) -> InstructionsList {
         self.enter_block();
+
+        let current_loop_break_name = self.current_loop_break_name();
+        let current_continue_block_name = self.current_continue_block_name();
+        let current_loop_name = self.current_loop_name();
 
         use boa_ast::statement::iteration::ForLoopInitializer;
         let initializer_expr: InstructionsList = match for_loop.init() {
@@ -2543,24 +2542,24 @@ impl WasmTranslator {
             ..condition,
             W::call("$cast_ref_to_i32_bool"),
             W::i32_eqz(),
-            W::br_if(self.current_loop_break_name()),
+            W::br_if(&current_loop_break_name),
             W::block(
-                self.current_continue_block_name(),
+                &current_continue_block_name,
                 Signature::default(),
                 self.translate_statement(for_loop.body()),
             ),
             ..final_instr,
             // TODO: we need unique naming to support loop in a loop. the same problem exists
             //       for a while loop
-            W::br(self.current_loop_name()),
+            W::br(&current_loop_name),
         ];
 
         let result = vec![
             ..initializer,
             W::r#loop(
-                self.current_loop_name(),
+                &current_loop_name,
                 vec![W::block(
-                    self.current_loop_break_name(),
+                    &current_loop_break_name,
                     Signature::default(),
                     block_instructions,
                 )],
@@ -2755,13 +2754,17 @@ impl WasmTranslator {
     fn translate_do_while_loop(&mut self, do_while_loop: &DoWhileLoop) -> InstructionsList {
         self.enter_block();
 
+        let current_loop_break_name = self.current_loop_break_name();
+        let current_continue_block_name = self.current_continue_block_name();
+        let current_loop_name = self.current_loop_name();
+
         let condition = self.translate_expression(do_while_loop.cond(), true);
         let block_instructions = vec![
             W::local_get("$scope"),
             W::call("$new_scope"),
             W::local_set("$scope"),
             W::block(
-                self.current_continue_block_name(),
+                &current_continue_block_name,
                 Signature::default(),
                 self.translate_statement(do_while_loop.body()),
             ),
@@ -2771,14 +2774,14 @@ impl WasmTranslator {
             ..condition,
             W::call("$cast_ref_to_i32_bool"),
             W::i32_eqz(),
-            W::br_if(self.current_loop_break_name()),
-            W::br(self.current_loop_name()),
+            W::br_if(&current_loop_break_name),
+            W::br(&current_loop_name),
         ];
 
         vec![W::r#loop(
-            self.current_loop_name(),
+            &current_loop_name,
             vec![W::block(
-                self.current_loop_break_name(),
+                &current_loop_break_name,
                 Signature::default(),
                 block_instructions,
             )],
@@ -2788,30 +2791,34 @@ impl WasmTranslator {
     fn translate_while_loop(&mut self, while_loop: &WhileLoop) -> InstructionsList {
         self.enter_block();
 
+        let current_loop_name = self.current_loop_name();
+        let current_continue_block_name = self.current_continue_block_name();
+        let current_loop_break_name = self.current_loop_break_name();
+
         let condition = self.translate_expression(while_loop.condition(), true);
         let block_instructions = vec![
             ..condition,
             W::call("$cast_ref_to_i32_bool"),
             W::i32_eqz(),
-            W::br_if(self.current_loop_break_name()),
+            W::br_if(&current_loop_break_name),
             W::local_get("$scope"),
             W::call("$new_scope"),
             W::local_set("$scope"),
             W::block(
-                self.current_continue_block_name(),
+                &current_continue_block_name,
                 Signature::default(),
                 self.translate_statement(while_loop.body()),
             ),
             W::local_get("$scope"),
             W::call("$extract_parent_scope"),
             W::local_set("$scope"),
-            W::br(self.current_loop_name()),
+            W::br(&current_loop_name),
         ];
 
         vec![W::r#loop(
-            self.current_loop_name(),
+            current_loop_name,
             vec![W::block(
-                self.current_loop_break_name(),
+                current_loop_break_name,
                 Signature::default(),
                 block_instructions,
             )],
@@ -2937,13 +2944,15 @@ fn main() -> anyhow::Result<()> {
     let init = translator.module.get_function_mut("init").unwrap();
     init.add_local_exact("$scope", scope_type.clone());
 
-    // TODO: I'm not a big fan of this, cause it's in reverse order
-    init.body.push_front(W::local_set("$scope"));
-    init.body.push_front(W::ref_cast(scope_type));
-    init.body.push_front(W::global_get("$global_scope"));
+    init.prepend_instructions(vec![
+        W::global_get("$global_scope"),
+        W::ref_cast(scope_type),
+        W::local_set("$scope"),
+    ]);
 
     let module = translator.module.clone();
     let mut module = TailCallTransformer::new(module).transform();
+    let mut module = HoistingTransformer::new(module).transform();
 
     // add data entries from the translator to the generated module
     // let mut sorted_entries: Vec<_> = translator.data_entries.into_iter().collect();

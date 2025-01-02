@@ -35,14 +35,14 @@ fn transform_function(function: &mut WatFunction) {
     }
 
     let mut i = 0;
-    while i < function.body.len() {
-        if function.body[i].is_return() && i > 0 && function.body[i - 1].is_call() {
+    let mut body = function.body.borrow_mut();
+    while i < body.len() {
+        if body[i].is_return() && i > 0 && body[i - 1].is_call() {
             // replace the call instruction with nop
-            let call = std::mem::replace(&mut function.body[i - 1], WatInstruction::Nop);
+            let call = std::mem::replace(&mut body[i - 1], WatInstruction::Nop);
             if let WatInstruction::Call(name) = call {
                 // replace return with return_call
-                let _ =
-                    std::mem::replace(&mut function.body[i], WatInstruction::r#return_call(name));
+                let _ = std::mem::replace(&mut body[i], WatInstruction::r#return_call(name));
             }
         }
         i += 1;

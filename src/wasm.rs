@@ -101,6 +101,7 @@ pub fn generate_module() -> WatModule {
         static VARIABLE_LET: i32       = 0b00000010;
         static VARIABLE_VAR: i32       = 0b00000100;
         static VARIABLE_PARAM: i32     = 0b00001000;
+        static VARIABLE_FUNC: i32      = 0b00010000;
 
         struct Variable {
             value: mut anyref,
@@ -1368,7 +1369,7 @@ pub fn generate_module() -> WatModule {
             } else {
                 var = existing as Variable;
 
-                if var.flags & VARIABLE_PARAM != 0 || var.flags & VARIABLE_VAR != 0 {
+                if var.flags & VARIABLE_PARAM != 0 || var.flags & VARIABLE_VAR != 0 || var.flags & VARIABLE_FUNC != 0{
                     var.value = value;
                 } else if var.flags & VARIABLE_CONST != 0 {
                     // const declaration, throw error
