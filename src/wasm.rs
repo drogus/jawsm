@@ -1355,6 +1355,26 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        fn declare_arguments(scope: Scope, arguments: JSArgs) {
+            let mut i: i32 = 0;
+            let len: i32 = len!(arguments);
+            let mut argument: anyref;
+            let mut index: Number = new_number(0 as f64);
+            let mut name_str: String;
+
+            let args_object: Object = create_object();
+
+            while i < len {
+                argument = arguments[i];
+                index = new_number(i as f64);
+                name_str = to_string(index);
+                set_property_value_str(args_object, name_str, argument);
+
+                i+=1;
+            }
+            declare_variable(scope, data!("arguments"), args_object, VARIABLE_PARAM);
+        }
+
         fn declare_variable(scope: Scope, name: i32, value: anyref, var_flag: i32) {
             let existing: Nullable<Variable> = variablemap_get(scope.variables, name);
             let var: Variable;
@@ -1677,6 +1697,10 @@ pub fn generate_module() -> WatModule {
 
             let name_str: String = to_string(name);
             let offset: i32 = get_data_offset_str(name_str.data);
+
+            if offset == 0 {
+                current_string_lookup = name_str;
+            }
 
             return get_property(target, offset);
         }
@@ -2587,6 +2611,7 @@ pub fn generate_module() -> WatModule {
                 // TODO: remove the need for a global
                 key = get_or_create_interned_string(map.interner, current_string_lookup as String);
             }
+
             new_entry = PropertyMapEntry { key: key, value: value };
             // First, search for existing key
             while i < map_size {

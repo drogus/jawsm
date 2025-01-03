@@ -528,12 +528,14 @@ impl WasmTranslator {
 
         self.current_function()
             .add_local_exact("$scope", WasmType::Ref("$Scope".into(), Nullable::False));
-        self.current_function()
-            .add_instruction(W::local_get("$parentScope"));
-        self.current_function()
-            .add_instruction(W::call("$new_scope"));
-        self.current_function()
-            .add_instruction(W::local_set("$scope"));
+        self.current_function().add_instructions(vec![
+            W::local_get("$parentScope"),
+            W::call("$new_scope"),
+            W::local_set("$scope"),
+            W::local_get("$scope"),
+            W::local_get("$arguments"),
+            W::call("$declare_arguments"),
+        ]);
 
         // set parameters on the scope
         for (i, param) in params.as_ref().iter().enumerate() {
