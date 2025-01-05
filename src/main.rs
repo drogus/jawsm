@@ -6,7 +6,7 @@ use boa_ast::{scope::Scope, visitor::VisitWith};
 use boa_interner::Interner;
 use boa_parser::{Parser, Source};
 use jawsm::{
-    async_functions_transformer::AsyncFunctionsTransformer, generate_data_string,
+    async_functions_transformer::AsyncFunctionsTransformer,
     hoisting_transformer::HoistingTransformer, tail_call_transformer::TailCallTransformer,
     WasmTranslator,
 };
@@ -52,11 +52,12 @@ fn main() -> anyhow::Result<()> {
         W::local_set("$scope"),
     ]);
 
-    let module = translator.module.clone();
-    // TODO: it should just mut borrow the module
-    let mut module = AsyncFunctionsTransformer::new(module, &mut translator).transform();
-    // let mut module = TailCallTransformer::new(module).transform();
-    let mut module = HoistingTransformer::new(module).transform();
+    let mut module = translator.module.clone();
+    // TODO: it's weird to clone the module and pass it as mutable alongisde the translator. We
+    // can just pass the translator and access the module through the translator
+    AsyncFunctionsTransformer::new(&mut module, &mut translator).transform();
+    // TailCallTransformer::new(module).transform();
+    HoistingTransformer::new(&mut module).transform();
 
     // add data entries from the translator to the generated module
     // let mut sorted_entries: Vec<_> = translator.data_entries.into_iter().collect();

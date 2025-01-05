@@ -9,19 +9,17 @@ use velcro::vec;
 use crate::{gen_function_name, VarType, WasmTranslator};
 
 pub struct AsyncFunctionsTransformer<'a> {
-    module: WatModule,
+    module: &'a mut WatModule,
     translator: &'a mut WasmTranslator,
 }
 
 impl<'a> AsyncFunctionsTransformer<'a> {
-    pub fn new(module: WatModule, translator: &'a mut WasmTranslator) -> Self {
+    pub fn new(module: &'a mut WatModule, translator: &'a mut WasmTranslator) -> Self {
         Self { module, translator }
     }
 
-    pub fn transform(mut self) -> WatModule {
+    pub fn transform(mut self) {
         self._transform();
-        // consume self and return the modified module
-        std::mem::take(&mut self.module)
     }
 
     fn _transform(&mut self) {

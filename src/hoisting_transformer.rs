@@ -58,19 +58,17 @@ use crate::VarType;
 //     b. add the declaration to the list of declarations to be hoisted
 //  6. After gathering all of the declarations the the transforms finds the beginning of the
 //     current's function scope and adds all of the gathered declarations there
-pub struct HoistingTransformer {
-    module: WatModule,
+pub struct HoistingTransformer<'a> {
+    module: &'a mut WatModule,
 }
 
-impl HoistingTransformer {
-    pub fn new(module: WatModule) -> Self {
+impl<'a> HoistingTransformer<'a> {
+    pub fn new(module: &'a mut WatModule) -> Self {
         Self { module }
     }
 
-    pub fn transform(mut self) -> WatModule {
+    pub fn transform(mut self) {
         self._transform();
-        // consume self and return the modified module
-        std::mem::take(&mut self.module)
     }
 
     fn _transform(&mut self) {
@@ -79,7 +77,7 @@ impl HoistingTransformer {
         for key in keys {
             cursor.set_current_function_by_key(key).unwrap();
             let mut declarations = gather_declarations(&mut cursor);
-            if declarations.len() > 0 {
+            if !declarations.is_empty() {
                 cursor.reset();
                 let set_scope_instr = Some(WatInstruction::LocalSet("$scope".to_string()));
                 while cursor.next() != set_scope_instr {}
