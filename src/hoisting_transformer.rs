@@ -74,23 +74,23 @@ impl HoistingTransformer {
     }
 
     fn _transform(&mut self) {
-        for function in self.module.functions.iter() {
-            let cursor = self.module.cursor_for_function(&function.name);
-            if let Some(mut cursor) = cursor {
-                let mut declarations = gather_declarations(&mut cursor);
-                if declarations.len() > 0 {
-                    cursor.reset();
-                    let set_scope_instr = Some(WatInstruction::LocalSet("$scope".to_string()));
-                    while cursor.current_instruction() != set_scope_instr && cursor.next() {}
+        let keys = self.module.function_keys();
+        let mut cursor = self.module.cursor();
+        for key in keys {
+            cursor.set_current_function_by_key(key).unwrap();
+            let mut declarations = gather_declarations(&mut cursor);
+            if declarations.len() > 0 {
+                cursor.reset();
+                let set_scope_instr = Some(WatInstruction::LocalSet("$scope".to_string()));
+                while cursor.next() != set_scope_instr {}
 
-                    if cursor.current_instruction() == set_scope_instr {
-                        // we need to go in reverse order, it doesn't really matter for vars,
-                        // cause all of the vars are assigned `undefined` at declaration anyway,
-                        // but it matters for function declarations
-                        declarations.reverse();
-                        for decl in declarations {
-                            cursor.insert_after_current(decl);
-                        }
+                if cursor.current_instruction() == set_scope_instr {
+                    // we need to go in reverse order, it doesn't really matter for vars,
+                    // cause all of the vars are assigned `undefined` at declaration anyway,
+                    // but it matters for function declarations
+                    declarations.reverse();
+                    for decl in declarations {
+                        cursor.insert_after_current(decl);
                     }
                 }
             }
@@ -98,13 +98,17 @@ impl HoistingTransformer {
     }
 }
 
-fn gather_declarations(mut cursor: &mut InstructionsCursor) -> Vec<InstructionsList> {
+fn gather_declarations(cursor: &mut InstructionsCursor) -> Vec<InstructionsList> {
     let mut result = Vec::new();
-    while let Some(instr) = cursor.current_instruction() {
+    while let Some(instr) = cursor.next() {
         if instr.is_block_type() {
-            for mut c in cursor.enter_block() {
-                result.append(&mut gather_declarations(&mut c));
+            let mut run = true;
+            cursor.enter_block().unwrap();
+            while run {
+                result.append(&mut gather_declarations(cursor));
+                run = cursor.next_block_arm();
             }
+            cursor.exit_block();
         } else {
             match instr {
                 WatInstruction::Call(name) if name == "$declare_variable" => {
@@ -150,10 +154,6 @@ fn gather_declarations(mut cursor: &mut InstructionsCursor) -> Vec<InstructionsL
                 }
                 _ => {}
             }
-        }
-
-        if !cursor.next() {
-            break;
         }
     }
 

@@ -1104,7 +1104,7 @@ impl WasmTranslator {
 
             (
                 function_instructions,
-                self.module.functions.last().unwrap().name.clone(),
+                self.module.functions().last().unwrap().name.clone(),
             )
         } else {
             let function_instructions = self.translate_function_generic(
@@ -1116,7 +1116,7 @@ impl WasmTranslator {
             (
                 function_instructions,
                 self.module
-                    .functions
+                    .functions()
                     .iter_mut()
                     .last()
                     .unwrap()
@@ -1376,7 +1376,7 @@ impl WasmTranslator {
         body: &FunctionBody,
     ) -> InstructionsList {
         let result = self.translate_function_generic(name, params, body);
-        let added_function_name = self.module.functions.last().unwrap().name.clone();
+        let added_function_name = self.module.functions().last().unwrap().name.clone();
         self.async_functions.push(added_function_name);
         result
     }

@@ -16,7 +16,7 @@ impl TailCallTransformer {
     }
 
     fn _transform(&mut self) {
-        for function in self.module.functions.iter_mut() {
+        for function in self.module.functions_mut().into_iter() {
             transform_function(function);
         }
     }

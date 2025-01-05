@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use tarnik_ast::{
-    cursor::InstructionsCursor, InstructionsList, Nullable, WasmType, WatFunction,
+    cursor::InstructionsCursor, FunctionKey, InstructionsList, Nullable, WasmType, WatFunction,
     WatInstruction as W, WatModule,
 };
 use velcro::vec;
@@ -25,35 +25,29 @@ impl<'a> AsyncFunctionsTransformer<'a> {
     }
 
     fn _transform(&mut self) {
-        let function_names: Vec<String> = self
-            .module
-            .functions
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
-        for name in function_names {
+        let keys: Vec<FunctionKey> = self.module.function_keys();
+        let mut cursor = self.module.cursor();
+        for key in keys {
+            let name = cursor.get_function_by_key_unchecked(key).name.clone();
             if self.translator.async_functions.contains(&name) {
+                cursor.set_current_function_by_key(key).unwrap();
+                let func = cursor.get_function_by_key_unchecked_mut(key);
                 // we can't pass a mutable module further down as `cursor_for_function` borrows it
                 // immutably. Does it's eaisest to modify the current function here.
                 // TODO: maybe it's best if cursor takes a mutable reference to a module, which
                 // would also solve the problem with multiple cursor instances potentially
                 // invalidating each other's instruction sets
-                let mut func = self.module.get_function_mut(&name).unwrap();
                 let constructor_local =
                     func.add_local("$constructor", WasmType::r#ref("$Function"));
                 let locals = func.locals.clone();
-                let mut cursor = self.module.cursor_for_function(&name).unwrap();
                 let function = transform_async_function(
                     constructor_local,
                     locals,
                     &mut cursor,
                     self.translator,
                 );
-                drop(cursor);
-                let function_name = function.name.clone();
-                self.module.add_function(function);
+                cursor.add_function(function);
 
-                let mut cursor = self.module.cursor_for_function(&function_name).unwrap();
                 replace_returns(&mut cursor)
             }
         }
@@ -61,11 +55,15 @@ impl<'a> AsyncFunctionsTransformer<'a> {
 }
 
 fn replace_returns(cursor: &mut InstructionsCursor) {
-    while let Some(instr) = cursor.current_instruction() {
+    while let Some(instr) = cursor.next() {
         if instr.is_block_type() {
-            for mut c in cursor.enter_block() {
-                replace_returns(&mut c);
+            let mut run = true;
+            cursor.enter_block().unwrap();
+            while run {
+                replace_returns(cursor);
+                run = cursor.next_block_arm();
             }
+            cursor.exit_block();
         } else if instr == W::Return {
             cursor.replace_current(vec![
                 W::local_set("$resolve-call-argument"),
@@ -77,10 +75,6 @@ fn replace_returns(cursor: &mut InstructionsCursor) {
                 W::ref_null_any(),
                 W::Return,
             ]);
-        }
-
-        if !cursor.next() {
-            break;
         }
     }
 }
@@ -104,9 +98,9 @@ fn transform_async_function(
     function.add_local_exact("$resolve", WasmType::r#ref("$Function"));
     function.add_local_exact("$resolve-call-argument", WasmType::Anyref);
 
-    while cursor.current_instruction() != Some(W::call("$declare_arguments")) && cursor.next() {}
+    while cursor.next() != Some(W::call("$declare_arguments")) {}
     let start = cursor.current_position() + 1;
-    while cursor.next() {}
+    while cursor.next().is_some() {}
     let end = cursor.current_position();
 
     let new_promise_instructions = vec![
