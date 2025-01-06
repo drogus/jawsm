@@ -7,6 +7,7 @@ use boa_interner::Interner;
 use boa_parser::{Parser, Source};
 use jawsm::{
     async_functions_transformer::AsyncFunctionsTransformer,
+    await_keyword_transformer::AwaitKeywordTransformer, generate_data_string,
     hoisting_transformer::HoistingTransformer, tail_call_transformer::TailCallTransformer,
     WasmTranslator,
 };
@@ -55,9 +56,10 @@ fn main() -> anyhow::Result<()> {
     let mut module = translator.module.clone();
     // TODO: it's weird to clone the module and pass it as mutable alongisde the translator. We
     // can just pass the translator and access the module through the translator
-    AsyncFunctionsTransformer::new(&mut module, &mut translator).transform();
-    // TailCallTransformer::new(module).transform();
     HoistingTransformer::new(&mut module).transform();
+    AsyncFunctionsTransformer::new(&mut module, &mut translator).transform();
+    AwaitKeywordTransformer::new(&mut module, &mut translator).transform();
+    // TailCallTransformer::new(module).transform();
 
     // add data entries from the translator to the generated module
     // let mut sorted_entries: Vec<_> = translator.data_entries.into_iter().collect();
@@ -84,7 +86,7 @@ fn main() -> anyhow::Result<()> {
         },
     );
 
-    // std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
+    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
 
     let binary = wat::parse_str(module.to_string())?;
 

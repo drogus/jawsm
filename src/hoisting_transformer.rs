@@ -100,11 +100,9 @@ fn gather_declarations(cursor: &mut InstructionsCursor) -> Vec<InstructionsList>
     let mut result = Vec::new();
     while let Some(instr) = cursor.next() {
         if instr.is_block_type() {
-            let mut run = true;
-            cursor.enter_block().unwrap();
-            while run {
+            let mut iterator = cursor.enter_block().unwrap();
+            while iterator.next(cursor) {
                 result.append(&mut gather_declarations(cursor));
-                run = cursor.next_block_arm();
             }
             cursor.exit_block();
         } else {

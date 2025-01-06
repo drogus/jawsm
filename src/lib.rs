@@ -35,6 +35,7 @@ use tarnik_ast::{
 use velcro::vec;
 
 pub mod async_functions_transformer;
+pub mod await_keyword_transformer;
 pub mod hoisting_transformer;
 pub mod tail_call_transformer;
 pub mod wasm;
@@ -683,7 +684,7 @@ impl WasmTranslator {
             // Add a local for arguments to the current function
             let call_arguments = self.current_function().add_local(
                 "$call_arguments",
-                WasmType::Ref("$JSArgs".into(), Nullable::False),
+                WasmType::Ref("$JSArgs".into(), Nullable::True),
             );
             let temp_arg = self
                 .current_function()
@@ -706,6 +707,7 @@ impl WasmTranslator {
                 instructions.append(&mut vec![
                     W::local_set(&temp_arg),
                     W::local_get(&call_arguments),
+                    W::ref_cast(WasmType::r#ref("$JSArgs")),
                     W::i32_const(index as i32),
                     W::local_get(&temp_arg),
                     W::array_set("$JSArgs"),
@@ -715,6 +717,7 @@ impl WasmTranslator {
             if function_name == "console.log" {
                 instructions.append(&mut vec![
                     W::local_get(&call_arguments),
+                    W::ref_cast(WasmType::r#ref("$JSArgs")),
                     W::call("$log"),
                     W::i32_const(1),
                 ]);
@@ -736,6 +739,7 @@ impl WasmTranslator {
                     W::local_get(&function_local),
                     get_this,
                     W::local_get(&call_arguments),
+                    W::ref_cast(WasmType::r#ref("$JSArgs")),
                     W::call("$call_function"),
                 ]);
             }
@@ -1067,7 +1071,9 @@ impl WasmTranslator {
             Expression::Binary(binary) => self.translate_binary(binary),
             Expression::BinaryInPrivate(_binary_in_private) => todo!(),
             Expression::Conditional(conditional) => self.translate_conditional(conditional),
-            Expression::Await(await_expr) => self.translate_await_expression(await_expr),
+            Expression::Await(await_expr) => {
+                self.translate_await_expression(await_expr, will_use_return)
+            }
             Expression::Yield(_) => todo!(),
             Expression::Parenthesized(parenthesized) => self.translate_parenthesized(parenthesized),
             _ => todo!(),
@@ -1131,7 +1137,7 @@ impl WasmTranslator {
 
         let constructor_local = self.current_function().add_local(
             "$constructor",
-            WasmType::Ref("$Function".to_string(), Nullable::False),
+            WasmType::Ref("$Function".to_string(), Nullable::True),
         );
         let prototype_local = self
             .current_function()
@@ -1147,6 +1153,7 @@ impl WasmTranslator {
                 W::ref_cast(WasmType::Ref("$Scope".to_string(), Nullable::False)),
                 W::i32_const(offset),
                 W::local_get(&constructor_local),
+                W::ref_cast(WasmType::r#ref("$Function")),
                 W::i32_const(VarType::Const.to_i32()),
                 W::call("$declare_variable"),
             ]);
@@ -1154,6 +1161,7 @@ impl WasmTranslator {
 
         constructor_instructions.append(&mut vec![
             W::local_get(&constructor_local),
+            W::ref_cast(WasmType::r#ref("$Function")),
             W::i32_const(self.insert_data_string("prototype").0),
             W::call("$get_property_value"),
             W::local_set(&prototype_local),
@@ -1181,6 +1189,7 @@ impl WasmTranslator {
                                 let offset = self.add_symbol(sym.to_owned());
                                 vec![
                                     target_instruction,
+                                    W::ref_cast(WasmType::r#ref("$Function")),
                                     W::i32_const(offset),
                                     ..function_instructions,
                                     W::call("$set_property_value"),
@@ -1189,6 +1198,7 @@ impl WasmTranslator {
                             PropertyName::Computed(expression) => {
                                 vec![
                                     target_instruction,
+                                    W::ref_cast(WasmType::r#ref("$Function")),
                                     ..self.translate_expression(expression, true),
                                     W::call("$to_string"),
                                     ..function_instructions,
@@ -1200,6 +1210,7 @@ impl WasmTranslator {
                             let offset = self.add_symbol(private_name.description());
                             vec![
                                 target_instruction,
+                                W::ref_cast(WasmType::r#ref("$Function")),
                                 W::i32_const(self.private_field_offset(offset)),
                                 ..function_instructions,
                                 W::call("$set_property_value"),
@@ -1270,6 +1281,7 @@ impl WasmTranslator {
                             let offset = self.add_symbol(sym.to_owned());
                             vec![
                                 W::local_get(&constructor_local),
+                                W::ref_cast(WasmType::r#ref("$Function")),
                                 W::i32_const(offset),
                                 ..assign,
                                 W::call("$set_property_value"),
@@ -1278,6 +1290,7 @@ impl WasmTranslator {
                         PropertyName::Computed(expr) => {
                             vec![
                                 W::local_get(&constructor_local),
+                                W::ref_cast(WasmType::r#ref("$Function")),
                                 ..self.translate_expression(expr, true),
                                 W::call("$to_string"),
                                 ..assign,
@@ -1298,6 +1311,7 @@ impl WasmTranslator {
                     let offset = self.add_symbol(private_name.description());
                     let mut instructions = vec![
                         W::local_get(&constructor_local),
+                        W::ref_cast(WasmType::r#ref("$Function")),
                         W::i32_const(self.private_field_offset(offset)),
                         ..assign,
                         W::call("$set_property_value"),
@@ -1363,10 +1377,21 @@ impl WasmTranslator {
         instructions
     }
 
-    fn translate_await_expression(&mut self, await_expression: &Await) -> InstructionsList {
-        // println!("AWAIT: {await_expression:#?}");
-        todo!();
-        vec![]
+    fn translate_await_expression(
+        &mut self,
+        await_expression: &Await,
+        will_use_return: bool,
+    ) -> InstructionsList {
+        // we need to set will_use_return for the awaited expression, cause we always want to use
+        // the promise
+        let await_instructions = self.translate_expression(await_expression.target(), true);
+
+        let await_instr = if will_use_return {
+            W::call("$__await__")
+        } else {
+            W::call("$__await_drop__")
+        };
+        vec![..await_instructions, await_instr]
     }
 
     fn translate_async_function(
@@ -1633,15 +1658,17 @@ impl WasmTranslator {
             .add_local("$prototype", WasmType::Anyref);
         let constructor = self.current_function().add_local(
             "$constructor",
-            WasmType::Ref("$Function".to_string(), Nullable::False),
+            WasmType::Ref("$Function".to_string(), Nullable::True),
         );
 
         let prototype_instructions = vec![
             W::ref_cast(WasmType::Ref("$Function".to_string(), Nullable::False)),
             W::local_tee(&constructor),
+            W::ref_cast(WasmType::r#ref("$Function")),
             W::I32Const(self.insert_data_string("prototype").0),
             W::call("$get_property"),
             W::local_get(&constructor),
+            W::ref_cast(WasmType::r#ref("$Function")),
             W::call("$get_value_of_property"),
             W::local_set(&prototype_local),
         ];
@@ -1658,6 +1685,7 @@ impl WasmTranslator {
             W::local_get(&new_instance),
             W::local_get(&prototype_local),
             W::local_get(&constructor),
+            W::ref_cast(WasmType::r#ref("$Function")),
             W::call("$return_new_instance_result"),
             // W::local_set(&prototype_local),
             // W::local_get(&new_instance),

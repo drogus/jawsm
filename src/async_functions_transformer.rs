@@ -36,7 +36,7 @@ impl<'a> AsyncFunctionsTransformer<'a> {
                 // would also solve the problem with multiple cursor instances potentially
                 // invalidating each other's instruction sets
                 let constructor_local =
-                    func.add_local("$constructor", WasmType::r#ref("$Function"));
+                    func.add_local("$constructor", WasmType::ref_null("$Function"));
                 let locals = func.locals.clone();
                 let function = transform_async_function(
                     constructor_local,
@@ -44,8 +44,10 @@ impl<'a> AsyncFunctionsTransformer<'a> {
                     &mut cursor,
                     self.translator,
                 );
+                let name = function.name.clone();
                 cursor.add_function(function);
 
+                cursor.set_current_function(&name).unwrap();
                 replace_returns(&mut cursor)
             }
         }
@@ -56,10 +58,9 @@ fn replace_returns(cursor: &mut InstructionsCursor) {
     while let Some(instr) = cursor.next() {
         if instr.is_block_type() {
             let mut run = true;
-            cursor.enter_block().unwrap();
-            while run {
+            let mut iterator = cursor.enter_block().unwrap();
+            while iterator.next(cursor) {
                 replace_returns(cursor);
-                run = cursor.next_block_arm();
             }
             cursor.exit_block();
         } else if instr == W::Return {
@@ -108,6 +109,7 @@ fn transform_async_function(
         W::call("$get_variable"),
         W::RefCast(WasmType::Ref("$Function".to_string(), Nullable::False)),
         W::local_tee(&constructor_local),
+        W::ref_cast(WasmType::r#ref("$Function")),
         // argument to call_function: this
         W::ref_null_any(),
         // create Promise arguments
@@ -121,6 +123,7 @@ fn transform_async_function(
         W::ref_null_any(),
         W::global_get("$promise_prototype"),
         W::local_get(constructor_local),
+        W::ref_cast(WasmType::r#ref("$Function")),
         W::call("$return_new_instance_result"),
     ];
 

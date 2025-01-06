@@ -796,6 +796,17 @@ pub fn generate_module() -> WatModule {
             return new_promise;
         }
 
+        fn set_then_callback(promise: anyref, callback: Function) {
+            let then_function_any: anyref = get_property_value(promise, data!("then"));
+
+            if ref_test!(then_function_any, Function) {
+                Promise_then(global_scope as Scope, promise, create_arguments_1(callback));
+            } else {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("then has to be a function"));
+                throw!(JSException, error);
+            }
+        }
+
         fn Promise_then(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let new_promise: Promise = create_new_promise();
             new_promise.own_prototype = promise_prototype;
@@ -2768,6 +2779,14 @@ pub fn generate_module() -> WatModule {
 
             return null;
         }
+
+        fn __await__(p: anyref) -> anyref{
+            return null;
+        }
+
+        fn __await_drop__() {
+        }
+
 
         fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
             let function: Function;
