@@ -80,6 +80,7 @@ pub fn gen_function_name(s: Option<String>) -> String {
         let s = s
             .strip_prefix("get ")
             .or_else(|| s.strip_prefix("set "))
+            .or_else(|| s.strip_prefix("$"))
             .unwrap_or(&s);
         format!("{s}-{r}")
     } else {
