@@ -86,7 +86,7 @@ fn main() -> anyhow::Result<()> {
         },
     );
 
-    std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
+    // std::fs::write("wat/generated.wat", module.to_string().as_bytes())?;
 
     let binary = wat::parse_str(module.to_string())?;
 
