@@ -14,7 +14,8 @@ use boa_ast::{
         Await, Call, Expression, Identifier, New, Parenthesized,
     },
     function::{
-        ArrowFunction, ClassElement, FormalParameterList, FunctionBody, FunctionExpression,
+        ArrowFunction, AsyncArrowFunction, ClassElement, FormalParameterList, FunctionBody,
+        FunctionExpression,
     },
     pattern::Pattern,
     property::PropertyName,
@@ -1003,6 +1004,24 @@ impl WasmTranslator {
         }
     }
 
+    // TODO: this is almot the same as regular arrow function, refactor
+    fn translate_aync_arrow_function(&mut self, f: &AsyncArrowFunction) -> InstructionsList {
+        let bind_instructions = if self
+            .current_function()
+            .params
+            .iter()
+            .any(|(maybe_name, _)| maybe_name.as_ref().map(|n| n == "$this").unwrap_or(false))
+        {
+            vec![W::local_get("$this"), W::call("$bind_this")]
+        } else {
+            vec![W::global_get("$global_this"), W::call("$bind_this")]
+        };
+        vec![
+            ..self.translate_async_function(f.name(), f.parameters(), f.body()),
+            ..bind_instructions,
+        ]
+    }
+
     fn translate_expression(
         &mut self,
         expression: &Expression,
@@ -1036,7 +1055,9 @@ impl WasmTranslator {
             Expression::ArrowFunction(arrow_function) => {
                 self.translate_arrow_function(arrow_function)
             }
-            Expression::AsyncArrowFunction(_async_arrow_function) => todo!(),
+            Expression::AsyncArrowFunction(async_arrow_function) => {
+                self.translate_aync_arrow_function(async_arrow_function)
+            }
             Expression::GeneratorExpression(_generator) => todo!(),
             Expression::AsyncFunctionExpression(f) => {
                 self.translate_async_function(f.name(), f.parameters(), f.body())
