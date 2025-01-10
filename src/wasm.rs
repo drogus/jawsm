@@ -362,6 +362,10 @@ pub fn generate_module() -> WatModule {
             return new_static_string(data!("<TODO: array>"), 15);
         }
 
+        fn Object_create_simple(value: anyref) -> anyref {
+            return Object_create(global_scope as Scope, null, create_arguments_1(value));
+        }
+
         fn Object_create(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let object: Object = create_object();
             object.own_prototype = arguments[0];
@@ -475,6 +479,12 @@ pub fn generate_module() -> WatModule {
             }
 
             return target;
+        }
+
+        fn get_super(this: anyref) -> anyref {
+            let constructor: anyref = get_property_value(this, data!("constructor"));
+            let prototype: anyref = get_property_value(constructor, data!("prototype"));
+            return prototype;
         }
 
         fn js_is_true(value: anyref) -> i32 {

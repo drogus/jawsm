@@ -1000,7 +1000,31 @@ impl WasmTranslator {
                     target
                 }
             }
-            PropertyAccess::Super(_super_property_access) => todo!(),
+            PropertyAccess::Super(super_property_access) => match super_property_access.field() {
+                PropertyAccessField::Const(sym) => {
+                    let offset = self.add_symbol(*sym);
+                    if let Some(assign_instructions) = assign {
+                        vec![
+                            W::local_get("$this"),
+                            W::call("$get_super"),
+                            W::I32Const(offset),
+                            ..assign_instructions,
+                            W::call("$set_property_value"),
+                        ]
+                    } else {
+                        vec![
+                            W::local_get("$this"),
+                            W::call("$get_super"),
+                            W::I32Const(offset),
+                            W::call("$get_property_value"),
+                        ]
+                    }
+                }
+                PropertyAccessField::Expr(expression) => {
+                    println!("PropertyAccessField: {expression:?}");
+                    todo!();
+                }
+            },
         }
     }
 
@@ -1110,6 +1134,7 @@ impl WasmTranslator {
         elements: &[ClassElement],
         will_use_return: bool,
     ) -> InstructionsList {
+        // TODO: if superclass is given we have to call the super() constructor
         let (mut constructor_instructions, constructor_function_name) = if let Some(constructor) =
             constructor
         {
@@ -1122,14 +1147,6 @@ impl WasmTranslator {
             // TODO: fix it, cause it will break when how functions are persisted changes
             //
             // TODO: implement error when using constructor without new()
-            // let constructor = self.module.functions.last().unwrap();
-            // let instructions = vec![
-            //     W::local_get("$this"),
-            //     W::local_get("$scope"),
-            //     W::i32_const(self.insert_data_string()),
-            //     W::call,
-            // ];
-
             (
                 function_instructions,
                 self.module.functions().last().unwrap().name.clone(),
@@ -1156,6 +1173,7 @@ impl WasmTranslator {
         use boa_ast::function::ClassElement;
 
         let mut additional_constructor_instructions = vec![];
+        let mut static_block_instructions = vec![];
 
         let constructor_local = self.current_function().add_local(
             "$constructor",
@@ -1181,12 +1199,29 @@ impl WasmTranslator {
             ]);
         }
 
+        if let Some(super_expr) = super_ref {
+            let superclass_instructions = self.translate_expression(super_expr, true);
+
+            constructor_instructions.append(&mut vec![
+                W::local_get(&constructor_local),
+                W::I32Const(self.insert_data_string("prototype").0),
+                ..superclass_instructions,
+                W::I32Const(self.insert_data_string("prototype").0),
+                W::call("$get_property_value"),
+                W::call("$Object_create_simple"),
+                W::call("$set_property_value"),
+            ]);
+        }
+
         constructor_instructions.append(&mut vec![
             W::local_get(&constructor_local),
             W::ref_cast(WasmType::r#ref("$Function")),
             W::i32_const(self.insert_data_string("prototype").0),
             W::call("$get_property_value"),
-            W::local_set(&prototype_local),
+            W::local_tee(&prototype_local),
+            W::I32Const(self.insert_data_string("constructor").0),
+            W::local_get(&constructor_local),
+            W::call("$set_property_value"),
         ]);
 
         for element in elements {
@@ -1211,7 +1246,6 @@ impl WasmTranslator {
                                 let offset = self.add_symbol(sym.to_owned());
                                 vec![
                                     target_instruction,
-                                    W::ref_cast(WasmType::r#ref("$Function")),
                                     W::i32_const(offset),
                                     ..function_instructions,
                                     W::call("$set_property_value"),
@@ -1220,7 +1254,6 @@ impl WasmTranslator {
                             PropertyName::Computed(expression) => {
                                 vec![
                                     target_instruction,
-                                    W::ref_cast(WasmType::r#ref("$Function")),
                                     ..self.translate_expression(expression, true),
                                     W::call("$to_string"),
                                     ..function_instructions,
@@ -1232,7 +1265,6 @@ impl WasmTranslator {
                             let offset = self.add_symbol(private_name.description());
                             vec![
                                 target_instruction,
-                                W::ref_cast(WasmType::r#ref("$Function")),
                                 W::i32_const(self.private_field_offset(offset)),
                                 ..function_instructions,
                                 W::call("$set_property_value"),
@@ -1341,7 +1373,39 @@ impl WasmTranslator {
 
                     constructor_instructions.append(&mut instructions);
                 }
-                ClassElement::StaticBlock(static_block_body) => todo!(),
+                ClassElement::StaticBlock(static_block_body) => {
+                    let original_this = self
+                        .current_function()
+                        .add_local("$original-this", WasmType::Anyref);
+                    let original_scope = self
+                        .current_function()
+                        .add_local("$original-scope", WasmType::r#ref("$Scope"));
+                    if !self.current_function().locals.contains_key("$this") {
+                        self.current_function()
+                            .add_local_exact("$this", WasmType::Anyref);
+                    }
+
+                    let mut statements = vec![];
+                    for stmt in static_block_body.statements().statements() {
+                        statements.append(&mut self.translate_statement_list_item(stmt));
+                    }
+
+                    static_block_instructions.append(&mut vec![
+                        W::local_get("$scope"),
+                        W::local_tee(&original_scope),
+                        W::call("$new_scope"),
+                        W::local_set("$scope"),
+                        W::local_get("$this"),
+                        W::local_set(&original_this),
+                        W::local_get(&constructor_local),
+                        W::local_set("$this"),
+                        ..statements,
+                        W::local_get(&original_this),
+                        W::local_set("$this"),
+                        W::local_get(&original_scope),
+                        W::local_set("$scope"),
+                    ]);
+                }
             }
         }
 
@@ -1349,6 +1413,8 @@ impl WasmTranslator {
             .get_function_mut(&constructor_function_name)
             .unwrap()
             .prepend_instructions(additional_constructor_instructions);
+
+        constructor_instructions.append(&mut static_block_instructions);
 
         constructor_instructions
     }
@@ -1654,7 +1720,36 @@ impl WasmTranslator {
                         boa_ast::property::MethodDefinitionKind::AsyncGenerator => {
                             todo!()
                         }
-                        boa_ast::property::MethodDefinitionKind::Async => todo!(),
+                        boa_ast::property::MethodDefinitionKind::Async => {
+                            match method_definition.name() {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        ..self.translate_async_function(
+                                            Some(Identifier::new(sym.to_owned())),
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value"),
+                                    ]
+                                }
+                                PropertyName::Computed(expr) => {
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        ..self.translate_expression(expr, true),
+                                        W::call("$to_string"),
+                                        ..self.translate_async_function(
+                                            None,
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value_str"),
+                                    ]
+                                }
+                            }
+                        }
                     }
                 }
                 PropertyDefinition::SpreadObject(_) => todo!(),
@@ -1686,7 +1781,6 @@ impl WasmTranslator {
         let prototype_instructions = vec![
             W::ref_cast(WasmType::Ref("$Function".to_string(), Nullable::False)),
             W::local_tee(&constructor),
-            W::ref_cast(WasmType::r#ref("$Function")),
             W::I32Const(self.insert_data_string("prototype").0),
             W::call("$get_property"),
             W::local_get(&constructor),
