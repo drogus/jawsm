@@ -1016,7 +1016,7 @@ impl WasmTranslator {
                             W::local_get("$this"),
                             W::call("$get_super"),
                             W::I32Const(offset),
-                            W::call("$get_property_value"),
+                            W::call("$get_class_property_value"),
                         ]
                     }
                 }
@@ -1227,16 +1227,39 @@ impl WasmTranslator {
         for element in elements {
             match element {
                 ClassElement::MethodDefinition(class_method_definition) => {
-                    let function_instructions = self.translate_function_generic(
-                        None,
-                        class_method_definition.parameters(),
-                        class_method_definition.body(),
-                    );
-
                     let target_instruction = if class_method_definition.is_static() {
                         W::local_get(&constructor_local)
                     } else {
                         W::local_get(&prototype_local)
+                    };
+
+                    let function_instructions = match class_method_definition.kind() {
+                        boa_ast::property::MethodDefinitionKind::Get => self
+                            .translate_get_function(
+                                None,
+                                class_method_definition.parameters(),
+                                class_method_definition.body(),
+                            ),
+                        boa_ast::property::MethodDefinitionKind::Set => self
+                            .translate_set_function(
+                                None,
+                                class_method_definition.parameters(),
+                                class_method_definition.body(),
+                            ),
+                        boa_ast::property::MethodDefinitionKind::Ordinary => self
+                            .translate_function_generic(
+                                None,
+                                class_method_definition.parameters(),
+                                class_method_definition.body(),
+                            ),
+                        boa_ast::property::MethodDefinitionKind::Generator => todo!(),
+                        boa_ast::property::MethodDefinitionKind::AsyncGenerator => todo!(),
+                        boa_ast::property::MethodDefinitionKind::Async => self
+                            .translate_async_function(
+                                None,
+                                class_method_definition.parameters(),
+                                class_method_definition.body(),
+                            ),
                     };
 
                     use boa_ast::function::ClassElementName;
@@ -1244,21 +1267,73 @@ impl WasmTranslator {
                         ClassElementName::PropertyName(property_name) => match property_name {
                             PropertyName::Literal(sym) => {
                                 let offset = self.add_symbol(sym.to_owned());
-                                vec![
-                                    target_instruction,
-                                    W::i32_const(offset),
-                                    ..function_instructions,
-                                    W::call("$set_property_value"),
-                                ]
+
+                                match class_method_definition.kind() {
+                                    boa_ast::property::MethodDefinitionKind::Get => vec![
+                                        target_instruction.clone(),
+                                        W::i32_const(offset),
+                                        ..function_instructions,
+                                        target_instruction.clone(),
+                                        W::i32_const(offset),
+                                        W::call("$create_get_property"),
+                                        W::call("$set_property"),
+                                    ],
+                                    boa_ast::property::MethodDefinitionKind::Set => vec![
+                                        target_instruction.clone(),
+                                        W::i32_const(offset),
+                                        ..function_instructions,
+                                        target_instruction.clone(),
+                                        W::i32_const(offset),
+                                        W::call("$create_set_property"),
+                                        W::call("$set_property"),
+                                    ],
+                                    _ => vec![
+                                        target_instruction,
+                                        W::i32_const(offset),
+                                        ..function_instructions,
+                                        W::call("$set_property_value"),
+                                    ],
+                                }
                             }
                             PropertyName::Computed(expression) => {
-                                vec![
-                                    target_instruction,
+                                let prop_local = self
+                                    .current_function()
+                                    .add_local("property_name", WasmType::r#ref("$String"));
+
+                                let mut result = vec![
                                     ..self.translate_expression(expression, true),
                                     W::call("$to_string"),
-                                    ..function_instructions,
-                                    W::call("$set_property_value_str"),
-                                ]
+                                    W::local_set(&prop_local),
+                                ];
+
+                                let mut function_instructions = match class_method_definition.kind()
+                                {
+                                    boa_ast::property::MethodDefinitionKind::Get => vec![
+                                        target_instruction.clone(),
+                                        ..function_instructions,
+                                        target_instruction.clone(),
+                                        W::local_get(&prop_local),
+                                        W::call("$create_get_property_str"),
+                                        W::call("$set_property_str"),
+                                    ],
+                                    boa_ast::property::MethodDefinitionKind::Set => vec![
+                                        target_instruction.clone(),
+                                        ..function_instructions,
+                                        target_instruction.clone(),
+                                        W::local_get(&prop_local),
+                                        W::call("$create_set_property_str"),
+                                        W::call("$set_property_str"),
+                                    ],
+                                    _ => vec![
+                                        target_instruction,
+                                        ..function_instructions,
+                                        W::call("$set_property_value_str"),
+                                    ],
+                                };
+
+                                result.append(&mut function_instructions);
+
+                                result
                             }
                         },
                         ClassElementName::PrivateName(private_name) => {

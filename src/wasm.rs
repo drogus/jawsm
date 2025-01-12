@@ -612,6 +612,9 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("call"),
                 create_property_function(global_scope as Scope, Function_call, null));
 
+            set_property(object, data!("bind"),
+                create_property_function(global_scope as Scope, Function_bind, null));
+
             return object;
         }
 
@@ -636,6 +639,28 @@ pub fn generate_module() -> WatModule {
             // fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
             // TODO: tail call
             return call_function(this, new_this, rest);
+        }
+
+        fn Function_bind(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: throw error if this is not true?
+            if len!(arguments) > 0 && ref_test!(this, Function) {
+                let function: Function = this as Function;
+                let new_function: Function = Function {
+                    scope: function.scope,
+                    func: function.func,
+                    this: arguments[0],
+                    properties: clone_propertymap(function.properties),
+                    own_prototype: function.own_prototype
+                };
+
+                return new_function;
+            }
+
+            return this;
+        }
+
+        fn Function_bind_simple(function: anyref, this: anyref) -> anyref {
+            return Function_bind(global_scope as Scope, function, create_arguments_1(this));
         }
 
         fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -1813,6 +1838,14 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        fn get_class_property_value(target: anyref, offset: i32) -> anyref {
+            let result: anyref = get_property_value(target, offset);
+            if ref_test!(result, Function) {
+                (result as Function).this = target;
+            }
+            return result;
+        }
+
         fn get_property_value(target: anyref, offset: i32) -> anyref {
             let property: Nullable<Property> = get_property(target, offset);
 
@@ -1849,6 +1882,7 @@ pub fn generate_module() -> WatModule {
                 if (property.flags & PROPERTY_IS_GETTER) != 0 {
                     let accessor: AccessorMethod = property.value as AccessorMethod;
                     let function: Function = accessor.get as Function;
+                    function.this = target;
                     let value: anyref = call_function(function, target, create_arguments_0());
                     return value;
                 } else {
@@ -2484,6 +2518,7 @@ pub fn generate_module() -> WatModule {
                 if value_property.flags & PROPERTY_IS_SETTER != 0 {
                     let accessor: AccessorMethod = value_property.value as AccessorMethod;
                     let function: Function = accessor.set as Function;
+                    function.this = target;
                     let arguments: JSArgs = create_arguments_1(value);
                     call_function(function, target, arguments);
                 } else {
