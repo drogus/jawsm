@@ -19,6 +19,7 @@ use boa_ast::{
     },
     pattern::Pattern,
     property::PropertyName,
+    scope::Scope,
     statement::{
         Block, Catch, DoWhileLoop, Finally, ForInLoop, ForLoop, ForOfLoop, If, Return, Statement,
         Switch, Throw, Try, WhileLoop,
@@ -27,8 +28,9 @@ use boa_ast::{
     StatementListItem,
 };
 use boa_interner::{Interner, Sym, ToInternedString};
+use boa_parser::{Parser, Source};
 use rand::{distributions::Alphanumeric, Rng};
-use std::{collections::HashMap, io::Read, ops::ControlFlow};
+use std::{collections::HashMap, io::Read, ops::ControlFlow, process::exit};
 use tarnik_ast::{
     Global, InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W,
     WatModule,
@@ -681,6 +683,24 @@ impl WasmTranslator {
                 ]);
             } else {
                 // TODO: throw TypeError
+            }
+        } else if function_name == "eval" {
+            if let Some(Expression::Literal(Literal::String(sym))) = call.args().first() {
+                let code = self.interner.resolve_expect(*sym).to_string();
+
+                let mut parser = Parser::new(Source::from_bytes(code.as_bytes()));
+                let ast = match parser.parse_script(&Scope::default(), &mut self.interner) {
+                    Ok(ast) => ast,
+                    Err(e) => {
+                        eprintln!("SyntaxError: {e}");
+                        exit(1);
+                    }
+                };
+
+                todo!("eval is not implemented");
+            } else {
+                // TODO: throw a JS error
+                todo!("eval without arguments should throw an error");
             }
         } else {
             // Add a local for arguments to the current function
