@@ -689,15 +689,24 @@ impl WasmTranslator {
                 let code = self.interner.resolve_expect(*sym).to_string();
 
                 let mut parser = Parser::new(Source::from_bytes(code.as_bytes()));
-                let ast = match parser.parse_script(&Scope::default(), &mut self.interner) {
-                    Ok(ast) => ast,
+                match parser.parse_script(&Scope::default(), &mut self.interner) {
+                    Ok(_ast) => todo!("eval is not implemented yet"),
                     Err(e) => {
-                        eprintln!("SyntaxError: {e}");
-                        exit(1);
+                        // throw a syntax error
+                        let message = e.to_string();
+                        let message_data = self.insert_data_string(&message);
+                        let offset = self.insert_data_string("SyntaxError").0;
+                        instructions.append(&mut vec![
+                            W::I32Const(offset),
+                            W::I32Const(message_data.0),
+                            W::I32Const(message_data.1),
+                            W::call("$new_static_string"),
+                            W::call("$convert_static_string_to_string"),
+                            W::call("$create_error"),
+                            W::throw("$JSException"),
+                        ]);
                     }
                 };
-
-                todo!("eval is not implemented");
             } else {
                 // TODO: throw a JS error
                 todo!("eval without arguments should throw an error");

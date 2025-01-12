@@ -603,6 +603,16 @@ pub fn generate_module() -> WatModule {
             return this;
         }
 
+        fn SyntaxError_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let message: anyref = null;
+            if len!(arguments) > 0 {
+                Error_constructor(scope, this, arguments);
+            }
+            set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 11));
+
+            return this;
+        }
+
         fn create_function_prototype() -> Object {
             let object: Object = create_object();
 
@@ -3167,7 +3177,7 @@ pub fn generate_module() -> WatModule {
                 return 0 as i31ref;
             }
 
-            let target_prototype_anyref: anyref = get_property(constructor, data!("prototype"));
+            let target_prototype_anyref: anyref = get_property_value(constructor, data!("prototype"));
             // is it possible to define a local of ref type and not assign anything right away?
             let mut target_prototype: Object = create_object();
             let mut prototype: anyref = null;
@@ -3849,6 +3859,7 @@ pub fn generate_module() -> WatModule {
             let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
             let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
             let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
+            let syntax_error_constructor: Function = new_function(global_scope as Scope, SyntaxError_constructor, null);
 
             promise_prototype = create_promise_prototype();
             global_object_prototype = create_object_prototype();
@@ -3882,6 +3893,7 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, data!("Symbol"), symbol_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("ReferenceError"), reference_error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("TypeError"), type_error_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("SyntaxError"), syntax_error_constructor, VARIABLE_CONST);
 
             setup_object_constructor(object_constructor);
 
