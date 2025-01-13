@@ -41,7 +41,9 @@ pub mod async_functions_transformer;
 pub mod await_keyword_transformer;
 pub mod hoisting_transformer;
 pub mod tail_call_transformer;
+pub(crate) mod test_helpers;
 pub mod wasm;
+pub(crate) mod wat_converter;
 
 #[derive(Clone)]
 pub enum VarType {
@@ -2371,7 +2373,20 @@ impl WasmTranslator {
             W::block(
                 &current_continue_block_name,
                 Signature::default(),
-                self.translate_statement(for_of_loop.body()),
+                vec![
+                    // there should be a fresh scope set up for each iteration of the loop
+                    W::local_get("$scope"),
+                    W::call("$new_scope"),
+                    W::local_set("$scope"),
+                    ..self.translate_statement(for_of_loop.body()),
+                    // TODO: this is not isolated to a for loop, but I haven't thought about this
+                    // before and I don't want to forget: what about the scope in try/catch? I need
+                    // to look into it
+                    // scope cleanup
+                    W::local_get("$scope"),
+                    W::call("$extract_parent_scope"),
+                    W::local_set("$scope"),
+                ],
             ),
             // check if we're done
             W::local_get(&iterator_result),
@@ -2523,7 +2538,20 @@ impl WasmTranslator {
             W::block(
                 &current_continue_block_name,
                 Signature::default(),
-                self.translate_statement(for_in_loop.body()),
+                vec![
+                    // there should be a fresh scope set up for each iteration of the loop
+                    W::local_get("$scope"),
+                    W::call("$new_scope"),
+                    W::local_set("$scope"),
+                    ..self.translate_statement(for_in_loop.body()),
+                    // TODO: this is not isolated to a for loop, but I haven't thought about this
+                    // before and I don't want to forget: what about the scope in try/catch? I need
+                    // to look into it
+                    // scope cleanup
+                    W::local_get("$scope"),
+                    W::call("$extract_parent_scope"),
+                    W::local_set("$scope"),
+                ],
             ),
             W::local_get(&i),
             W::I32Const(1),
@@ -2606,7 +2634,20 @@ impl WasmTranslator {
             W::block(
                 &current_continue_block_name,
                 Signature::default(),
-                self.translate_statement(for_loop.body()),
+                vec![
+                    // there should be a fresh scope set up for each iteration of the loop
+                    W::local_get("$scope"),
+                    W::call("$new_scope"),
+                    W::local_set("$scope"),
+                    ..self.translate_statement(for_loop.body()),
+                    // TODO: this is not isolated to a for loop, but I haven't thought about this
+                    // before and I don't want to forget: what about the scope in try/catch? I need
+                    // to look into it
+                    // scope cleanup
+                    W::local_get("$scope"),
+                    W::call("$extract_parent_scope"),
+                    W::local_set("$scope"),
+                ],
             ),
             ..final_instr,
             // TODO: we need unique naming to support loop in a loop. the same problem exists
@@ -2892,13 +2933,14 @@ impl WasmTranslator {
         for statement in block.statement_list().statements() {
             instructions.append(&mut self.translate_statement_list_item(statement));
         }
-        let block_instr = W::block(self.random_block_name(), Signature::default(), instructions);
+        // let block_instr = W::block(self.random_block_name(), Signature::default(), instructions);
 
-        let result = vec![block_instr];
+        // let result = vec![block_instr];
 
         //self.exit_block();
 
-        result
+        // result
+        instructions
     }
 
     fn translate_statement_list_item(&mut self, statement: &StatementListItem) -> InstructionsList {

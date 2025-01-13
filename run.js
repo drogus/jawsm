@@ -152,7 +152,13 @@ const importObject = {
   instance = await WebAssembly.instantiate(compiled, importObject);
   const exports = instance.exports;
 
-  scriptResult = exports["wasi:cli/run@0.2.1#run"]();
+  let entrypoint;
+  if (exports["wasi:cli/run@0.2.1#run"]) {
+    entrypoint = exports["wasi:cli/run@0.2.1#run"];
+  } else {
+    entrypoint = exports["_start"];
+  }
+  scriptResult = entrypoint();
 
   if (pollablesToWaitForLength === 0) {
     if (typeof process !== "undefined") {

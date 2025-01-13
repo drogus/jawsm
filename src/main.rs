@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
     // can just pass the translator and access the module through the translator
     HoistingTransformer::new(&mut module).transform();
     AsyncFunctionsTransformer::new(&mut module, &mut translator).transform();
-    AwaitKeywordTransformer::new(&mut module, &mut translator).transform();
+    AwaitKeywordTransformer::new(&mut module).transform();
     // TailCallTransformer::new(module).transform();
 
     // add data entries from the translator to the generated module

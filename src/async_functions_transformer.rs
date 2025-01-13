@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use tarnik_ast::{
-    cursor::InstructionsCursor, FunctionKey, InstructionsList, Nullable, WasmType, WatFunction,
-    WatInstruction as W, WatModule,
+    cursor::InstructionsCursor, FunctionKey, IndexMap, InstructionsList, Nullable, WasmType,
+    WatFunction, WatInstruction as W, WatModule,
 };
 use velcro::vec;
 
@@ -80,7 +80,7 @@ fn replace_returns(cursor: &mut InstructionsCursor) {
 
 fn transform_async_function(
     constructor_local: String,
-    locals: HashMap<String, WasmType>,
+    locals: IndexMap<String, WasmType>,
     cursor: &mut InstructionsCursor,
     translator: &mut WasmTranslator,
 ) -> WatFunction {
