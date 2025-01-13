@@ -195,6 +195,28 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        // Types for saving primitives on the stack
+        type StackArray = [mut anyref];
+        struct StackI32 { value: i32 }
+        struct StackI64 { value: i64 }
+        struct StackF32 { value: f32 }
+        struct StackF64 { value: f64 }
+
+        struct Thenable {
+            // the object with .then method itself
+            thenable: anyref,
+            // callback function
+            callback: Function,
+            // reference to the function that was paused when running thenable
+            // TODO: I don't think we need it with callbacks version, it was useful only for
+            // asyncify version
+            // caller: JSFunc,
+            // TODO: again, I think it's not really needed here
+            // result: anyref,
+        }
+
+        type Thenables = [mut Nullable<Thenable>];
+
         // TODO; allow to insert valus from outside the macro, for now it's fine to just use
         // something big enough to allow small scripts to run
         static mut free_memory_offset: i32 = 5000;
@@ -214,6 +236,7 @@ pub fn generate_module() -> WatModule {
             length: 0
         };
         static symbol_iterator: Symbol = Symbol {};
+        static mut thenables: Thenables = [null; 5];
 
         // Memory management functions required by the Component Model
         #[export("cabi_realloc")]
@@ -231,6 +254,49 @@ pub fn generate_module() -> WatModule {
 
         fn enable_global_strict_mode() {
             global_strict_mode = 1;
+        }
+
+        fn push_thenable(callback: Function, thenable_obj: anyref) -> anyref {
+            let len: i32 = len!(thenables);
+            let mut i: i32 = 0;
+
+            while i < len {
+                if ref_test!(thenables[i], null) {
+                    thenables[i] = Thenable {
+                        thenable: thenable_obj,
+                        callback: callback
+                    };
+
+                    return null;
+                }
+                i += 1;
+            }
+
+            // TODO: at the moment we don't extend the array if it's full. for now it's fine as
+            // I'm creating the array with 100 elements, but eventually the initial array could be
+            // smaller and then we extend it as needed
+            return null;
+        }
+
+        fn process_thenables() {
+            // log(create_arguments_1(create_string_from_array("process thenables")));
+            let len: i32 = len!(thenables);
+            let mut i: i32 = 0;
+
+            while i < len {
+                if !ref_test!(thenables[i], null) {
+                    // log(create_arguments_1(create_string_from_array("found thenable")));
+                    let thenable: Thenable = thenables[i] as Thenable;
+                    thenables[i] = null;
+
+                    set_then_callback(thenable.thenable, thenable.callback);
+                    // the processed thenable could add more, so let's restart
+                    // TODO: return_call should be used here, so we don't crash the stack
+                    process_thenables();
+                    return;
+                }
+                i += 1;
+            }
         }
 
         fn new_pollable(id: i32, func: anyref) -> Pollable {
@@ -841,11 +907,17 @@ pub fn generate_module() -> WatModule {
             return new_promise;
         }
 
-        fn set_then_callback(promise: anyref, callback: Function) {
-            let then_function_any: anyref = get_property_value(promise, data!("then"));
+        fn set_then_callback(thenable: anyref, callback: Function) {
+            let then_function_any: anyref = get_property_value(thenable, data!("then"));
 
             if ref_test!(then_function_any, Function) {
-                Promise_then(global_scope as Scope, promise, create_arguments_1(callback));
+                if ref_test!(thenable, Promise) {
+                    // log(create_arguments_1(create_string_from_array("thenable is a promise")));
+                    Promise_then(global_scope as Scope, thenable, create_arguments_1(callback));
+                } else {
+                    // log(create_arguments_1(create_string_from_array("thenable is not a promise")));
+                    call_function(then_function_any, null, create_arguments_1(callback));
+                }
             } else {
                 let error: anyref = create_error(data!("TypeError"), create_string_from_array("then has to be a function"));
                 throw!(JSException, error);
@@ -2835,13 +2907,12 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
-        fn __await__(p: anyref) -> anyref{
+        fn __await__(p: anyref) -> anyref {
             return null;
         }
 
         fn __await_drop__() {
         }
-
 
         fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
             let function: Function;
@@ -3539,6 +3610,8 @@ pub fn generate_module() -> WatModule {
             let mut i: i32 = 0;
             while i < len {
                 if ref_test!(pollables[i], null) {
+                    // log(create_arguments_2(create_string_from_array("added pollable index:"), new_number(i as f64)));
+                    // log(create_arguments_2(create_string_from_array("added pollable isNull:"), new_number(ref_test!(pollable, null) as f64)));
                     pollables[i] = pollable;
                     return pollable.id;
                 }
@@ -3609,11 +3682,13 @@ pub fn generate_module() -> WatModule {
             let mut current_offset: i32 = offset + 4;
             let mut index: i32;
 
+            // log(create_arguments_2(create_string_from_array("clearing pollables, len:"), new_number(len as f64)));
             let mut i: i32 = 0;
             while i < len {
                  index = find_pollable(memory[current_offset]);
 
                 if index != -1 {
+                    // log(create_arguments_2(create_string_from_array("clearing pollable with index"), new_number(index as f64)));
                     pollables[index] = null;
                 }
 
@@ -3626,10 +3701,11 @@ pub fn generate_module() -> WatModule {
             let len: i32 = len!(pollables);
             let mut current_offset: i32 = offset;
             let mut stored_length: i32 = 0;
+            let mut current: Nullable<Pollable> = null;
 
             let mut i: i32 = 0;
             while i < len {
-                let current: Nullable<Pollable> = pollables[i];
+                current = pollables[i];
                 if ref_test!(current, null) == 0 {
                     memory[current_offset] = current.id;
                     current_offset += 4;
@@ -3653,6 +3729,7 @@ pub fn generate_module() -> WatModule {
 
                 let id: i32 = subscribe_duration(duration);
                 let pollable_id: i32 = add_pollable(new_pollable(id, func));
+                // log(create_arguments_1(create_string_from_array("added pollable for a timeout")));
                 return new_number(pollable_id as f64);
             }
 
@@ -3835,18 +3912,23 @@ pub fn generate_module() -> WatModule {
         #[export("main_loop")]
         fn main_loop() {
             let offset: i32 = free_memory_offset;
-
             // Shift offset to avoid overwriting pollables memory
             free_memory_offset = offset + (memory[offset] * 4) + 4;  // N 32-bit numbers + length
 
+            // log(create_arguments_2(create_string_from_array("started processing pollables, len:"), new_number(memory[offset] as f64)));
+
             execute_pollables(offset);
+
+            process_thenables();
+
             clear_pollables(offset);
 
             // Restore original free_memory_offset
             free_memory_offset = offset;
 
             let length: i32 = store_pollables(free_memory_offset);
-            poll_many(free_memory_offset, length, free_memory_offset);
+
+            poll_many(offset, length, offset);
         }
 
         fn install_globals() {
@@ -3907,8 +3989,13 @@ pub fn generate_module() -> WatModule {
                 install_globals();
                 init();
 
-                let length: i32 = store_pollables(free_memory_offset);
-                poll_many(free_memory_offset, length, free_memory_offset);
+                process_thenables();
+
+                let offset: i32 = free_memory_offset;
+                free_memory_offset = offset + (len!(pollables) * 4) + 4;  // N 32-bit numbers + length
+                let length: i32 = store_pollables(offset);
+                poll_many(offset, length, offset);
+                free_memory_offset = offset;
 
                 return 0;
             }
