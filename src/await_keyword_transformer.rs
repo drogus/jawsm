@@ -16,6 +16,7 @@ use walrus::Type;
 
 use crate::{gen_function_name, VarType, WasmTranslator};
 
+// TODO: now that this handles both await and yield keywords, this should be renamed
 pub struct AwaitKeywordTransformer<'a> {
     module: &'a mut WatModule,
 }
@@ -68,7 +69,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
     fn new(cursor: &'a mut InstructionsCursor<'b>, key: FunctionKey) -> Self {
         let func = cursor.module_mut().get_function_by_key_unchecked_mut(key);
         let func_name = func.name.clone();
-        println!("transforming {func_name}");
 
         let type_name = get_type_name(&func_name);
 
@@ -105,11 +105,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
 
     fn transform(&mut self, key: FunctionKey) {
         self.cursor.set_current_function_by_key(key).unwrap();
-        println!(
-            "CURRENT FUNCTION AT TRANSFORM: {:?} {}",
-            self.cursor.get_function_by_key_unchecked(key).name,
-            self.cursor.current_function()
-        );
 
         let additional_keys = self.split_blocks(vec![]);
 
@@ -132,8 +127,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
 
         if !additional_keys.is_empty() {
             for key in additional_keys {
-                // println!("TRANSFORM");
-                // println!("--------------------------------------------------------------------------------------------------");
                 self.replaced_await = false;
                 self.transform(key);
             }
@@ -218,7 +211,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
         mut additional_keys: Vec<FunctionKey>,
     ) -> Vec<FunctionKey> {
         while let Some(instr) = self.cursor.next() {
-            // println!("instruction: {instr:?}");
             match instr {
                 W::If { .. } => {
                     // This looks like it's quite common, might be nice to prepare a standard way to
@@ -299,7 +291,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
 
     fn split_blocks(&mut self, mut additional_keys: Vec<FunctionKey>) -> Vec<FunctionKey> {
         while let Some(instr) = self.cursor.next() {
-            // println!("instruction: {instr:?}");
             match instr {
                 W::If { .. } => {
                     // This looks like it's quite common, might be nice to prepare a standard way to
@@ -334,7 +325,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
                     label: block_label,
                     instructions: block_instructions,
                 } => {
-                    // println!("BLOCK: {:?}", block_label);
                     self.label_to_func.insert(
                         block_label.clone(),
                         block_end_name(&self.func_name, &block_label),
@@ -428,12 +418,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
 
         let mut loop_start_func = self.create_block_func(&func, without_dollar(&loop_start_name));
         let mut loop_end_func = self.create_block_func(&func, without_dollar(&loop_end_name));
-
-        println!(
-            "split_loop start {}: {}",
-            self.cursor.current_function().name,
-            self.cursor.current_function()
-        );
 
         // Get the loop body instructions, append the call to the end function and put them in the
         // context of try/catch parent blocks
@@ -678,11 +662,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             })
             .collect();
 
-        println!(
-            "-------------- split_at_await old_instructions -------------------------:\n {:?}",
-            old_instructions
-        );
-
         let body: InstructionsList = vec![
             W::local_get("$arguments"),
             W::call("$first_argument_or_null"),
@@ -694,12 +673,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             ..old_instructions.unwrap_or_default(),
             W::return_call("$empty_generator_callback"),
         ];
-
-        println!(
-            "split_at_yield end {}: {}",
-            self.cursor.current_function().name,
-            self.cursor.current_function()
-        );
 
         callback_function.set_body(body);
         callback_function
@@ -895,11 +868,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             })
             .collect();
 
-        println!(
-            "-------------- split_at_await old_instructions -------------------------:\n {:?}",
-            old_instructions
-        );
-
         let body: InstructionsList = vec![
             W::local_get("$arguments"),
             W::I32Const(0),
@@ -912,12 +880,6 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             ..old_instructions.unwrap_or_default(),
             W::ref_null_any(),
         ];
-
-        println!(
-            "split_at_await end {}: {}",
-            self.cursor.current_function().name,
-            self.cursor.current_function()
-        );
 
         callback_function.set_body(body);
         callback_function
@@ -1566,14 +1528,6 @@ mod tests {
         let expected_end_block = parse_wat_function(expected_end_block_wat);
         let expected_callback_func = parse_wat_function(&expected_callback_function);
 
-        // println!(
-        //     "{:?}",
-        //     module
-        //         .functions()
-        //         .iter()
-        //         .map(|f| f.name.clone())
-        //         .collect::<Vec<String>>()
-        // );
         // Compare results
         let main_func = module.get_function("$foo").unwrap();
         let end_block_func = module.get_function("$foo-block-test-block-end").unwrap();
@@ -1769,7 +1723,6 @@ mod tests {
         let loop_func = module.get_function("$foo-loop-test_loop-start").unwrap();
         let callback_func = module.get_function("$fc-foo-1").unwrap();
 
-        // println!("LOOP FUNC:\n{}", loop_func.to_string());
         assert_functions_eq(&expected_main, main_func);
         assert_functions_eq(&expected_loop, loop_func);
         assert_functions_eq(&expected_callback, callback_func);
@@ -1967,7 +1920,6 @@ mod tests {
         let loop_func = module.get_function("$foo-loop-test_loop-start").unwrap();
         let callback_func = module.get_function("$fc-foo-1").unwrap();
 
-        // println!("LOOP FUNC:\n{}", loop_func.to_string());
         assert_functions_eq(&expected_main, main_func);
         assert_functions_eq(&expected_loop, loop_func);
         assert_functions_eq(&expected_callback, callback_func);
@@ -2088,7 +2040,6 @@ mod tests {
         let main_func = module.get_function("$foo").unwrap();
         let callback_func = module.get_function("$fc-foo-1").unwrap();
 
-        // println!("LOOP FUNC:\n{}", loop_func.to_string());
         assert_functions_eq(&expected_main, main_func);
         assert_functions_eq(&expected_callback, callback_func);
     }
@@ -2198,7 +2149,6 @@ mod tests {
         let main_func = module.get_function("$foo").unwrap();
         let callback_func = module.get_function("$fc-foo-1").unwrap();
 
-        // println!("LOOP FUNC:\n{}", loop_func.to_string());
         assert_functions_eq(&expected_main, main_func);
         assert_functions_eq(&expected_callback, callback_func);
     }
