@@ -43,7 +43,7 @@ fn transform<'a>(cursor: &mut InstructionsCursor<'a>, keys: Vec<FunctionKey>) {
 }
 
 fn transform_inner<'a>(cursor: &mut InstructionsCursor<'a>, key: FunctionKey) {
-    if uses_await(cursor, Some(key)) {
+    if uses_await_or_yield(cursor, Some(key)) {
         let mut transformer = FunctionTranformer::new(cursor, key);
         transformer.transform(key);
     }
@@ -283,6 +283,13 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
                     let key = self.cursor.module_mut().add_function(function);
                     additional_keys.push(key);
                 }
+                W::Call(name) if name == "$__yield__" || name == "$__yield_drop__" => {
+                    let function = self.split_at_yield(name);
+
+                    let key = self.cursor.module_mut().add_function(function);
+                    additional_keys.push(key);
+                }
+
                 _ => {}
             }
         }
@@ -476,6 +483,226 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
         additional_keys.push(start_key);
         let end_key = self.cursor.module_mut().add_function(loop_end_func);
         additional_keys.push(end_key);
+    }
+
+    fn split_at_yield(&mut self, name: String) -> WatFunction {
+        // we need to break the function into two
+        let func = self.cursor.current_function().clone();
+        // new function name
+        let callback_function_name = self.get_func_name();
+        // type holding the state
+        let type_name = &self.type_name;
+
+        let mut stack = {
+            let instructions_list = self.cursor.current_instructions_list();
+            let instructions = instructions_list.borrow();
+            self.cursor
+                .analyze_stack_state(&instructions[0..self.cursor.current_position()])
+        };
+
+        let mut stack_instructions = vec![
+            W::ref_null_any(),
+            if stack.is_empty() {
+                W::I32Const(0)
+            } else {
+                W::I32Const((stack.len() - 1) as i32)
+            },
+            W::array_new("$StackArray"),
+            W::local_set("$stack_state"),
+        ];
+        let mut stack_extraction_instructions = vec![
+            W::local_get("$state"),
+            W::struct_get(type_name, "$stack"),
+            W::local_set("$stack_state"),
+        ];
+
+        let mut stack_extraction_temp = VecDeque::new();
+        stack.pop(); // pop type being the current promise
+        let mut i = 0;
+        while let Some(ty) = stack.pop() {
+            if ty.is_numeric() {
+                // a primitive, first create a heap allocated value
+                let primitive_name = match ty {
+                    WasmType::I32 => "$StackI32",
+                    WasmType::I64 => "$StackI64",
+                    WasmType::F32 => "$StackF32",
+                    WasmType::F64 => "$StackF64",
+                    _ => unreachable!(),
+                };
+                stack_instructions.append(&mut vec![
+                    W::struct_new(primitive_name),
+                    W::local_set("$stack_temp"),
+                    W::local_get("$stack_state"),
+                    W::I32Const(i),
+                    W::local_get("$stack_temp"),
+                    W::array_set("$StackArray"),
+                ]);
+
+                stack_extraction_temp.push_front(vec![
+                    W::local_get("$stack_state"),
+                    W::I32Const(i),
+                    W::array_get("$StackArray"),
+                    W::ref_cast(WasmType::r#ref(primitive_name)),
+                    W::struct_get(primitive_name, "$value"),
+                ]);
+            } else {
+                // it's an allocated object, just add to the array
+                stack_instructions.append(&mut vec![
+                    W::local_set("$stack_temp"),
+                    W::local_get("$stack_state"),
+                    W::I32Const(i),
+                    W::local_get("$stack_temp"),
+                    W::array_set("$StackArray"),
+                ]);
+
+                stack_extraction_temp.push_front(vec![
+                    W::local_get("$stack_state"),
+                    W::I32Const(i),
+                    W::array_get("$StackArray"),
+                    W::ref_cast(ty),
+                ]);
+            }
+            i += 1;
+        }
+
+        for mut se in stack_extraction_temp {
+            stack_extraction_instructions.append(&mut se);
+        }
+
+        stack_instructions.push(W::local_get("$stack_state"));
+
+        // TODO: at the moment I assume all of the params/locals are always named, which is
+        // the case so far, but it might change in the future, so it might be good to fix
+        // this
+        let params_and_locals_instructions: InstructionsList = self
+            .state_fields
+            .iter()
+            .filter_map(|struct_field| {
+                let name = struct_field.clone().name.unwrap();
+                if name != "$stack" {
+                    Some(W::local_get(with_dollar(&name)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let yield_arg_local = self
+            .cursor
+            .current_function_mut()
+            .add_local("$yield_arg", WasmType::Anyref);
+
+        let mut callback_function = WatFunction::new(callback_function_name.clone());
+        callback_function.params = vec![
+            (Some("$parentScope".to_string()), WasmType::r#ref("$Scope")),
+            (Some("$this".to_string()), WasmType::Anyref),
+            (Some("$arguments".to_string()), WasmType::r#ref("$JSArgs")),
+        ];
+        // we need to filter out locals that may have been defined in parent functions that don't
+        // ahdere to the JSFunc format
+        callback_function.locals = func
+            .locals
+            .clone()
+            .into_iter()
+            .filter(|(name, _)| {
+                *name != "$this" && *name != "$arguments" && *name != "$parentScope"
+            })
+            .collect::<IndexMap<String, WasmType>>();
+
+        if !self.cursor.current_function().local_exists("$state") {
+            callback_function
+                .locals
+                .insert("$state".to_string(), WasmType::r#ref(type_name));
+        }
+
+        callback_function.results = vec![WasmType::Anyref];
+        callback_function.add_local_exact("$__yield_result__", WasmType::Anyref);
+
+        // replace await
+        let replacement_instructions = if name == "$__yield__" {
+            vec![
+                ..stack_extraction_instructions,
+                W::local_get("$__yield_result__"),
+            ]
+        } else {
+            vec![..stack_extraction_instructions, W::Nop]
+        };
+
+        let old_position = self.cursor.current_position();
+        let _ = self.cursor.replace_current(replacement_instructions);
+        self.cursor.set_position(old_position);
+        self.replaced_await = true;
+
+        // Here, we have to replace the await by creating a thenable. The old code (ie. the code
+        // that will be executed after the thenable resolves) goes into the callback function
+        let old_instructions = self
+            .cursor
+            .replace_till_the_end_of_function_try_catch_aware(vec![
+                W::local_set(&yield_arg_local),
+                // save the entire function state in a prepared struct
+                // stack state should be on the stack here
+                ..stack_instructions,
+                ..params_and_locals_instructions,
+                W::struct_new(type_name),
+                W::local_set("$state"),
+                // W::local_get(&thenable_obj_local),
+                // we're setting scope to global scope for now, it will be fetched from state
+                // anyway
+                W::global_get("$global_scope"),
+                W::ref_cast(WasmType::r#ref("$Scope")),
+                // second argument is the function ref
+                W::ref_func(format!("${callback_function_name}")),
+                // third argument is `this`, we will keep the state here
+                W::local_get("$state"),
+                // this will be the callback function
+                W::call("$new_function"),
+                W::local_get(&yield_arg_local),
+                W::return_call("$return_custom_generator_callback"),
+            ]);
+
+        let params_and_locals_extraction: InstructionsList = self
+            .state_fields
+            .iter()
+            // TODO: remove these clones
+            .filter(|s| {
+                s.name.clone().unwrap() != "$stack"
+                    && s.name.clone().unwrap() != "$__yield_result__"
+            })
+            .flat_map(|struct_field| {
+                let name = &struct_field.clone().name.unwrap();
+                vec![
+                    W::local_get("$state"),
+                    W::struct_get(type_name, name),
+                    W::local_set(name),
+                ]
+            })
+            .collect();
+
+        println!(
+            "-------------- split_at_await old_instructions -------------------------:\n {:?}",
+            old_instructions
+        );
+
+        let body: InstructionsList = vec![
+            W::local_get("$arguments"),
+            W::call("$first_argument_or_null"),
+            W::local_set("$__yield_result__"),
+            W::local_get("$this"),
+            W::ref_cast(WasmType::r#ref(type_name)),
+            W::local_set("$state"),
+            ..params_and_locals_extraction,
+            ..old_instructions.unwrap_or_default(),
+            W::return_call("$empty_generator_callback"),
+        ];
+
+        println!(
+            "split_at_yield end {}: {}",
+            self.cursor.current_function().name,
+            self.cursor.current_function()
+        );
+
+        callback_function.set_body(body);
+        callback_function
     }
 
     fn split_at_await(&mut self, name: String) -> WatFunction {
@@ -830,7 +1057,7 @@ fn create_state_type(func: &WatFunction) -> WasmType {
     ])
 }
 
-fn uses_await(cursor: &mut InstructionsCursor, key: Option<FunctionKey>) -> bool {
+fn uses_await_or_yield(cursor: &mut InstructionsCursor, key: Option<FunctionKey>) -> bool {
     if let Some(key) = key {
         cursor.set_current_function_by_key(key).unwrap();
     }
@@ -841,14 +1068,19 @@ fn uses_await(cursor: &mut InstructionsCursor, key: Option<FunctionKey>) -> bool
                 let mut iterator = cursor.enter_block().unwrap();
 
                 while iterator.next(cursor) {
-                    if uses_await(cursor, None) {
+                    if uses_await_or_yield(cursor, None) {
                         return true;
                     }
                 }
 
                 cursor.exit_block();
             }
-            W::Call(name) if name == "$__await__" || name == "$__await_drop__" => {
+            W::Call(name)
+                if name == "$__await__"
+                    || name == "$__await_drop__"
+                    || name == "$__yield__"
+                    || name == "$__yield_drop__" =>
+            {
                 return true;
             }
             _ => {}

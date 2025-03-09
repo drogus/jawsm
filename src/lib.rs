@@ -11,11 +11,11 @@ use boa_ast::{
             update::UpdateTarget,
             Assign, Binary, Conditional, Unary, Update,
         },
-        Await, Call, Expression, Identifier, New, Parenthesized,
+        Await, Call, Expression, Identifier, New, Parenthesized, Yield,
     },
     function::{
         ArrowFunction, AsyncArrowFunction, ClassElement, FormalParameterList, FunctionBody,
-        FunctionExpression,
+        FunctionExpression, GeneratorDeclaration,
     },
     pattern::Pattern,
     property::PropertyName,
@@ -39,11 +39,13 @@ use velcro::vec;
 
 pub mod async_functions_transformer;
 pub mod await_keyword_transformer;
+pub mod generator_functions_transformer;
 pub mod hoisting_transformer;
 pub mod tail_call_transformer;
 pub(crate) mod test_helpers;
 pub mod wasm;
 pub(crate) mod wat_converter;
+pub mod yield_keyword_transformer;
 
 #[derive(Clone)]
 pub enum VarType {
@@ -104,6 +106,7 @@ pub struct WasmTranslator {
     pub identifiers_map: HashMap<i32, i32>,
     pub current_block_number: u32,
     pub async_functions: Vec<String>,
+    pub generator_functions: Vec<String>,
 }
 
 impl WasmTranslator {
@@ -127,6 +130,7 @@ impl WasmTranslator {
             identifiers_map: HashMap::new(),
             current_block_number: 0,
             async_functions: Vec::new(),
+            generator_functions: Default::default(),
         }
     }
 
@@ -1113,7 +1117,9 @@ impl WasmTranslator {
             Expression::AsyncArrowFunction(async_arrow_function) => {
                 self.translate_aync_arrow_function(async_arrow_function)
             }
-            Expression::GeneratorExpression(_generator) => todo!(),
+            Expression::GeneratorExpression(g) => {
+                self.translate_generator_function(g.name(), g.parameters(), g.body())
+            }
             Expression::AsyncFunctionExpression(f) => {
                 self.translate_async_function(f.name(), f.parameters(), f.body())
             }
@@ -1151,7 +1157,7 @@ impl WasmTranslator {
             Expression::Await(await_expr) => {
                 self.translate_await_expression(await_expr, will_use_return)
             }
-            Expression::Yield(_) => todo!(),
+            Expression::Yield(r#yield) => self.translate_yield_expression(r#yield, will_use_return),
             Expression::Parenthesized(parenthesized) => self.translate_parenthesized(parenthesized),
             _ => todo!(),
         }
@@ -1283,7 +1289,12 @@ impl WasmTranslator {
                                 class_method_definition.parameters(),
                                 class_method_definition.body(),
                             ),
-                        boa_ast::property::MethodDefinitionKind::Generator => todo!(),
+                        boa_ast::property::MethodDefinitionKind::Generator => self
+                            .translate_generator_function(
+                                None,
+                                class_method_definition.parameters(),
+                                class_method_definition.body(),
+                            ),
                         boa_ast::property::MethodDefinitionKind::AsyncGenerator => todo!(),
                         boa_ast::property::MethodDefinitionKind::Async => self
                             .translate_async_function(
@@ -1571,6 +1582,26 @@ impl WasmTranslator {
         instructions
     }
 
+    fn translate_yield_expression(
+        &mut self,
+        yield_expression: &Yield,
+        will_use_return: bool,
+    ) -> InstructionsList {
+        // TODO: handle delegating to another generator
+        let yield_instructions = if let Some(target) = yield_expression.target() {
+            self.translate_expression(target, true)
+        } else {
+            vec![W::ref_null_any()]
+        };
+
+        let yield_instr = if will_use_return {
+            W::call("$__yield__")
+        } else {
+            W::call("$__yield_drop__")
+        };
+        vec![..yield_instructions, yield_instr]
+    }
+
     fn translate_await_expression(
         &mut self,
         await_expression: &Await,
@@ -1822,7 +1853,36 @@ impl WasmTranslator {
                                 }
                             }
                         }
-                        boa_ast::property::MethodDefinitionKind::Generator => todo!(),
+                        boa_ast::property::MethodDefinitionKind::Generator => {
+                            match method_definition.name() {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        ..self.translate_generator_function(
+                                            Some(Identifier::new(sym.to_owned())),
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value"),
+                                    ]
+                                }
+                                PropertyName::Computed(expr) => {
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        ..self.translate_expression(expr, true),
+                                        W::call("$to_string"),
+                                        ..self.translate_generator_function(
+                                            None,
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value_str"),
+                                    ]
+                                }
+                            }
+                        }
                         boa_ast::property::MethodDefinitionKind::AsyncGenerator => {
                             todo!()
                         }
@@ -2197,6 +2257,18 @@ impl WasmTranslator {
         }
     }
 
+    fn translate_generator_function(
+        &mut self,
+        name: Option<Identifier>,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+    ) -> InstructionsList {
+        let result = self.translate_function_generic(name, params, body);
+        let added_function_name = self.module.functions().last().unwrap().name.clone();
+        self.generator_functions.push(added_function_name);
+        result
+    }
+
     fn translate_declaration(&mut self, declaration: &Declaration) -> InstructionsList {
         // println!(
         //     "translate_declaration {}",
@@ -2221,7 +2293,21 @@ impl WasmTranslator {
                 result
             }
             Declaration::Lexical(v) => self.translate_lexical(v),
-            Declaration::GeneratorDeclaration(_generator) => todo!(),
+            Declaration::GeneratorDeclaration(generator) => {
+                let mut declaration = self.translate_generator_function(
+                    Some(generator.name()),
+                    generator.parameters(),
+                    generator.body(),
+                );
+                let offset = self.add_identifier(&generator.name());
+                let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
+                result.append(&mut declaration);
+                result.append(&mut vec![
+                    W::i32_const(VarType::Var.to_i32()),
+                    W::call("$declare_variable".to_string()),
+                ]);
+                result
+            }
             Declaration::AsyncFunctionDeclaration(decl) => {
                 let mut declaration = self.translate_async_function(
                     Some(decl.name()),

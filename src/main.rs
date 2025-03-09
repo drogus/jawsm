@@ -8,6 +8,7 @@ use boa_parser::{Parser, Source};
 use jawsm::{
     async_functions_transformer::AsyncFunctionsTransformer,
     await_keyword_transformer::AwaitKeywordTransformer, generate_data_string,
+    generator_functions_transformer::GeneratorFunctionsTransformer,
     hoisting_transformer::HoistingTransformer, tail_call_transformer::TailCallTransformer,
     WasmTranslator,
 };
@@ -57,6 +58,7 @@ fn main() -> anyhow::Result<()> {
     // TODO: it's weird to clone the module and pass it as mutable alongisde the translator. We
     // can just pass the translator and access the module through the translator
     HoistingTransformer::new(&mut module).transform();
+    GeneratorFunctionsTransformer::new(&mut module, &mut translator).transform();
     AsyncFunctionsTransformer::new(&mut module, &mut translator).transform();
     AwaitKeywordTransformer::new(&mut module).transform();
     // TailCallTransformer::new(module).transform();
