@@ -12,43 +12,43 @@ I started this project while working on a stress testing tool called [Crows](htt
 I believe that with modern WASM proposals it is possible to implement 100% of JavaScript features without the need to use a compiled interpreter, as WASM runtimes are already interpreters.
 
 If you want to see it happen, please consider [sponsoring my work](https://github.com/sponsors/drogus)
+
 ### What works
 
-As I eventually want to implement 100% of the language, I'm purposefully focused on implementing the semantics first, rather than go for 100% of builtins and grammar as I want to be 100% sure it's doable.
+As I eventually want to implement 100% of the language, I'm purposefully focused on implementing the parts of the language that are the hardest to implement rather than go for a large number of simpler features.
 
-I have a list of 4 things that I think are hard to implement and after I implement all of them I will focus on more grammar and builtins. These are:
+When I started the project I listed four features of the language that I think are crucial to implement in order to test the viability of the project
 
 1. Scopes/closures
 2. try/catch
 3. async/await
 4. generators
 
-The last two are kind of similar as by getting generators working, one essentially has tools to make async await work, but I still wanted to make the distinction. At the moment Jawsm can compile code using closures with (mostly) proper scopes support, it allows try/catch and it implements (limited) `Promise` API and `async` (but not `await` yet). For example the following script will print `error: foo`:
-
-```JavaScript
-let value = "foo";
-async function foo() {
-  throw value;
-}
-
-foo().then(
-  function () {},
-  function (v) {
-    console.log("error", v);
-  },
-);
-```
+Since then I've been able to implement all four of them with an exception of a combination of async and generators, ie. async generators, but support for async generators should be coming soon.
 
 A non exhaustive list of other stuff that should work:
 
 * declaring and assigning: `var`, `let`, `const`
-* `while`
+* all of the loops: `do..while`, `while`, `for`, `for..in`, `for..of`
+* `switch` statement
+* limited support for `break` and `continue` (it works, but may be buggy)
 * string lierals, adding string literals
 * numbers and basic operators (`+`, `-`, `*`, `/`)
 * booleans and basic boolean operators
 * array literals
 * object literals
 * `new` keyword
+* `async` and `await`
+* limited support from `Promise` APIs
+* generator functions
+* `try`/`catch`
+
+A few notable things that are missing at the moment:
+
+* async generators
+* most of the builtins and most of the methods on existing builtins
+* RegExp expressions
+* BigInt literals
 
 ### Host requirements
 
