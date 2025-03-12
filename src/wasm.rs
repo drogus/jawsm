@@ -854,8 +854,9 @@ pub fn generate_module() -> WatModule {
                     result = call_function(promise.finally_callback as Function, null, arguments);
                 }
 
-                // Handle then callback if present
-                if ref_test!(promise.then_callback, Function) {
+                // TODO: is the ordering here important?
+                // Handle catch callback if present
+                if ref_test!(promise.catch_callback, Function) {
                     result = call_function(promise.catch_callback as Function, null, arguments);
                 } else {
                     result = previous_result;
