@@ -878,7 +878,10 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             W::local_set("$state"),
             ..params_and_locals_extraction,
             ..old_instructions.unwrap_or_default(),
-            W::ref_null_any(),
+            // TODO: this instruction creates a problem with nested awaits and it seems the code
+            // works without it cause `old_instructions` usually end with a return anyway, but I
+            // want to keep an eye on it, if this part breaks
+            // W::ref_null_any(),
         ];
 
         callback_function.set_body(body);
