@@ -53,7 +53,6 @@ pub fn parse_wat_function(wat_func: &str) -> WatFunction {
         if let wast::core::ModuleKind::Text(items) = module.kind {
             for item in items {
                 if let wast::core::ModuleField::Func(func) = item {
-                    dbg!(&func);
                     let name = func.id.unwrap().name();
                     let mut tarnik_func = WatFunction::new(name);
 

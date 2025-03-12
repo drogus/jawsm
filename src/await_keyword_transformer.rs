@@ -396,6 +396,8 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             W::ref_null_any(),
         ]);
 
+        self.cursor.set_position(old_position);
+
         // we will need to transform the newly added function, so pass it to additional_keys
         let key = self.cursor.module_mut().add_function(block_end_func);
         additional_keys.push(key);
@@ -461,6 +463,8 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
         ]);
         // Set up loop start function body
         loop_end_func.set_body(vec![..self.extract_state_instructions(), ..rest]);
+
+        self.cursor.set_position(old_position);
 
         // Add both functions to module
         let start_key = self.cursor.module_mut().add_function(loop_start_func);
@@ -674,6 +678,8 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             W::return_call("$empty_generator_callback"),
         ];
 
+        self.cursor.set_position(old_position);
+
         callback_function.set_body(body);
         callback_function
     }
@@ -883,6 +889,8 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             // want to keep an eye on it, if this part breaks
             // W::ref_null_any(),
         ];
+
+        self.cursor.set_position(old_position);
 
         callback_function.set_body(body);
         callback_function
@@ -1156,8 +1164,8 @@ mod tests {
                 local.get $state
                 call $new_function
                 local.get $thenable_obj-1
-                call $push_thenable
-                ref.null any               
+                return_call $push_thenable
+                ref.null any
             )"#;
 
         let expected_foo_callback = r#"
@@ -1180,9 +1188,6 @@ mod tests {
                 ref.cast (ref  $function-state-foo)
                 local.set $state
                 local.get $state
-                struct.get $function-state-foo $stack
-                local.set $stack_state
-                local.get $state
                 struct.get $function-state-foo $parentScope
                 local.set $parentScope
                 local.get $state
@@ -1194,6 +1199,9 @@ mod tests {
                 local.get $state
                 struct.get $function-state-foo $local1-1
                 local.set $local1-1
+                local.get $state
+                struct.get $function-state-foo $stack
+                local.set $stack_state
                 nop
                 i32.const 1
                 if
@@ -1207,23 +1215,20 @@ mod tests {
                   struct.new $function-state-foo
                   local.set $state
                   local.get $state
-                  call $foo-block-outer-end
-                  drop
-                else
-                  i32.const 20
-                  ref.null any
-                  i32.const 0
-                  array.new $StackArray
-                  local.get $parentScope
-                  local.get $this
-                  local.get $arguments
-                  local.get $local1-1
-                  struct.new $function-state-foo
-                  local.set $state
-                  local.get $state
-                  call $foo-block-inner-end
-                  drop
+                  return_call $foo-block-outer-end
                 end
+                i32.const 20
+                ref.null any
+                i32.const 0
+                array.new $StackArray
+                local.get $parentScope
+                local.get $this
+                local.get $arguments
+                local.get $local1-1
+                struct.new $function-state-foo
+                local.set $state
+                local.get $state
+                return_call $foo-block-inner-end
             )
         "#;
 
@@ -1262,11 +1267,10 @@ mod tests {
                 struct.new $function-state-foo
                 local.set $state
                 local.get $state
-                call $foo-block-middle-end
-                drop
+                return_call $foo-block-middle-end
+                ref.null any
             )"#;
 
-        // Expected end block function for $outer-block
         let expected_end_middle_block_wat = r#"
             (func $foo-block-middle-end
                 (param $state (ref $function-state-foo))
@@ -1301,8 +1305,8 @@ mod tests {
                 struct.new $function-state-foo
                 local.set $state
                 local.get $state
-                call $foo-block-outer-end
-                drop
+                return_call $foo-block-outer-end
+                ref.null any
             )"#;
 
         // Expected end block function for $outer-block
@@ -1331,6 +1335,7 @@ mod tests {
                 local.set $local1-1
                 local.get $local1-1
                 i32.add
+                ref.null any
             )"#;
 
         // Parse and add input function
@@ -1350,6 +1355,14 @@ mod tests {
 
         // Compare results
         let main_func = module.get_function("$foo").unwrap();
+        println!(
+            "{:?}",
+            module
+                .functions()
+                .iter()
+                .map(|f| f.name.clone())
+                .collect::<Vec<String>>()
+        );
         let end_inner_block_func = module.get_function("$foo-block-inner-end").unwrap();
         let end_middle_block_func = module.get_function("$foo-block-middle-end").unwrap();
         let end_outer_block_func = module.get_function("$foo-block-outer-end").unwrap();
@@ -1420,7 +1433,7 @@ mod tests {
                 local.get $state
                 call $new_function
                 local.get $thenable_obj-1
-                call $push_thenable
+                return_call $push_thenable
                 ref.null any
             )"#;
 
@@ -1444,9 +1457,6 @@ mod tests {
                 ref.cast (ref  $function-state-foo)
                 local.set $state
                 local.get $state
-                struct.get $function-state-foo $stack
-                local.set $stack_state
-                local.get $state
                 struct.get $function-state-foo $parentScope
                 local.set $parentScope
                 local.get $state
@@ -1458,6 +1468,9 @@ mod tests {
                 local.get $state
                 struct.get $function-state-foo $local1-1
                 local.set $local1-1
+                local.get $state
+                struct.get $function-state-foo $stack
+                local.set $stack_state
                 nop
                 i32.const 1
                 if
@@ -1471,23 +1484,20 @@ mod tests {
                   struct.new $function-state-foo
                   local.set $state
                   local.get $state
-                  call $foo-block-test-block-end
-                  drop
-                else
-                  i32.const 20
-                  ref.null any
-                  i32.const 0
-                  array.new $StackArray
-                  local.get $parentScope
-                  local.get $this
-                  local.get $arguments
-                  local.get $local1-1
-                  struct.new $function-state-foo
-                  local.set $state
-                  local.get $state
-                  call $foo-block-test-block-end
-                  drop
+                  return_call $foo-block-test-block-end
                 end
+                i32.const 20
+                ref.null any
+                i32.const 0
+                array.new $StackArray
+                local.get $parentScope
+                local.get $this
+                local.get $arguments
+                local.get $local1-1
+                struct.new $function-state-foo
+                local.set $state
+                local.get $state
+                return_call $foo-block-test-block-end
             )"#;
 
         // Expected end block function
@@ -1516,6 +1526,7 @@ mod tests {
                 local.set $local1-1
                 local.get $local1-1
                 i32.add
+                ref.null any
             )"#;
 
         // Parse and add input function
@@ -1595,7 +1606,7 @@ mod tests {
                 struct.new $function-state-foo
                 local.set $state
                 local.get $state
-                call $foo-loop-test_loop-start
+                return_call $foo-loop-test_loop-start
             )"#;
 
         // Expected loop function after transformation
@@ -1646,7 +1657,7 @@ mod tests {
                 local.get $state
                 call $new_function
                 local.get $thenable_obj-1
-                call $push_thenable
+                return_call $push_thenable
                 ref.null any
             )"#;
 
@@ -1661,7 +1672,7 @@ mod tests {
                 (local $stack_temp anyref)
                 (local $state (ref  $function-state-foo))
                 (local $__resolved_value__ anyref)
-                
+
                 local.get $arguments
                 i32.const 0
                 call $get_arguments_element
@@ -1669,9 +1680,6 @@ mod tests {
                 local.get $this
                 ref.cast (ref  $function-state-foo)
                 local.set $state
-                local.get $state
-                struct.get $function-state-foo $stack
-                local.set $stack_state
                 local.get $state
                 struct.get $function-state-foo $parentScope
                 local.set $parentScope
@@ -1684,6 +1692,9 @@ mod tests {
                 local.get $state
                 struct.get $function-state-foo $counter
                 local.set $counter
+                local.get $state
+                struct.get $function-state-foo $stack
+                local.set $stack_state
                 nop
                 local.get $counter
                 i32.const 5
@@ -1699,13 +1710,20 @@ mod tests {
                   struct.new $function-state-foo
                   local.set $state
                   local.get $state
-                  call $foo-loop-test_loop-start
-                  drop
-                else
-                  call $after_br_if
-                  local.get $counter
-                  drop
+                  return_call $foo-loop-test_loop-start
                 end
+                call $after_br_if
+                ref.null any
+                i32.const 0
+                array.new $StackArray
+                local.get $parentScope
+                local.get $this
+                local.get $arguments
+                local.get $counter
+                struct.new $function-state-foo
+                local.set $state
+                local.get $state
+                return_call $foo-loop-test_loop-end
             )"#;
 
         // Parse and add input function
@@ -1780,19 +1798,25 @@ mod tests {
                 (local $state (ref $function-state-foo))
                 (local $stack_temp anyref)
 
-                i32.const 0
-                local.set $counter
-                ref.null any
-                i32.const 0
-                array.new $StackArray
-                local.get $parentScope
-                local.get $this
-                local.get $arguments
-                local.get $counter
-                struct.new $function-state-foo
-                local.set $state
-                local.get $state
-                call $foo-loop-test_loop-start
+                try
+                  i32.const 0
+                  local.set $counter
+                  ref.null any
+                  i32.const 0
+                  array.new $StackArray
+                  local.get $parentScope
+                  local.get $this
+                  local.get $arguments
+                  local.get $counter
+                  struct.new $function-state-foo
+                  local.set $state
+                  local.get $state
+                  return_call $foo-loop-test_loop-start
+                catch $Exception
+                  call $log
+                end
+                i32.const 202
+                call $log
             )"#;
 
         // Expected loop function after transformation
@@ -1820,30 +1844,36 @@ mod tests {
                 local.get $state
                 struct.get $function-state-foo $counter
                 local.set $counter
-                local.get $counter
-                i32.const 1
-                i32.add
-                local.set $counter
-                i32.const 101
-                local.set $thenable_obj-1
-                ref.null any
-                i32.const 0
-                array.new $StackArray
-                local.set $stack_state
-                local.get $stack_state
-                local.get $parentScope
-                local.get $this
-                local.get $arguments
-                local.get $counter
-                struct.new $function-state-foo
-                local.set $state
-                global.get $global_scope
-                ref.cast (ref  $Scope)
-                ref.func $fc-foo-1
-                local.get $state
-                call $new_function
-                local.get $thenable_obj-1
-                call $push_thenable
+                try
+                  local.get $counter
+                  i32.const 1
+                  i32.add
+                  local.set $counter
+                  i32.const 101
+                  local.set $thenable_obj-1
+                  ref.null any
+                  i32.const 0
+                  array.new $StackArray
+                  local.set $stack_state
+                  local.get $stack_state
+                  local.get $parentScope
+                  local.get $this
+                  local.get $arguments
+                  local.get $counter
+                  struct.new $function-state-foo
+                  local.set $state
+                  global.get $global_scope
+                  ref.cast (ref  $Scope)
+                  ref.func $fc-foo-1
+                  local.get $state
+                  call $new_function
+                  local.get $thenable_obj-1
+                  return_call $push_thenable
+                catch $Exception
+                  call $log
+                end
+                i32.const 202
+                call $log
                 ref.null any
             )"#;
 
@@ -1858,7 +1888,7 @@ mod tests {
                 (local $stack_temp anyref)
                 (local $state (ref  $function-state-foo))
                 (local $__resolved_value__ anyref)
-                
+
                 local.get $arguments
                 i32.const 0
                 call $get_arguments_element
@@ -1866,9 +1896,6 @@ mod tests {
                 local.get $this
                 ref.cast (ref  $function-state-foo)
                 local.set $state
-                local.get $state
-                struct.get $function-state-foo $stack
-                local.set $stack_state
                 local.get $state
                 struct.get $function-state-foo $parentScope
                 local.set $parentScope
@@ -1881,11 +1908,28 @@ mod tests {
                 local.get $state
                 struct.get $function-state-foo $counter
                 local.set $counter
-                nop
-                local.get $counter
-                i32.const 5
-                i32.lt_s
-                if
+                try
+                  local.get $state
+                  struct.get $function-state-foo $stack
+                  local.set $stack_state
+                  nop
+                  local.get $counter
+                  i32.const 5
+                  i32.lt_s
+                  if
+                    ref.null any
+                    i32.const 0
+                    array.new $StackArray
+                    local.get $parentScope
+                    local.get $this
+                    local.get $arguments
+                    local.get $counter
+                    struct.new $function-state-foo
+                    local.set $state
+                    local.get $state
+                    return_call $foo-loop-test_loop-start
+                  end
+                  call $after_br_if
                   ref.null any
                   i32.const 0
                   array.new $StackArray
@@ -1896,13 +1940,12 @@ mod tests {
                   struct.new $function-state-foo
                   local.set $state
                   local.get $state
-                  call $foo-loop-test_loop-start
-                  drop
-                else
-                  call $after_br_if
-                  local.get $counter
-                  drop
+                  return_call $foo-loop-test_loop-end
+                catch $Exception
+                  call $log
                 end
+                i32.const 202
+                call $log
             )"#;
 
         // Parse and add input function
@@ -1981,10 +2024,11 @@ mod tests {
                   local.get $state
                   call $new_function
                   local.get $thenable_obj-1
-                  call $push_thenable
+                  return_call $push_thenable
                 catch $Exception
                   call $inside-catch
                 end
+                call $after-try-catch
                 ref.null any
             )"#;
 
@@ -2007,9 +2051,6 @@ mod tests {
                 ref.cast (ref  $function-state-foo)
                 local.set $state
                 local.get $state
-                struct.get $function-state-foo $stack
-                local.set $stack_state
-                local.get $state
                 struct.get $function-state-foo $parentScope
                 local.set $parentScope
                 local.get $state
@@ -2019,6 +2060,9 @@ mod tests {
                 struct.get $function-state-foo $arguments
                 local.set $arguments
                 try
+                    local.get $state
+                    struct.get $function-state-foo $stack
+                    local.set $stack_state
                     nop
                     call $after-await
                 catch $Exception
@@ -2097,7 +2141,7 @@ mod tests {
                 struct.new $function-state-foo
                 local.set $state
                 local.get $state
-                call $foo-loop-loop-start            
+                return_call $foo-loop-loop-start
             )"#;
 
         let expected_callback_wat = r#"
@@ -2110,7 +2154,7 @@ mod tests {
                 (local $stack_temp anyref)
                 (local $state (ref  $function-state-foo))
                 (local $__resolved_value__ anyref)
-                
+
                 local.get $arguments
                 i32.const 0
                 call $get_arguments_element
@@ -2128,12 +2172,35 @@ mod tests {
                 struct.get $function-state-foo $arguments
                 local.set $arguments
                 try
-                    nop
+                    local.get $state
+                    struct.get $function-state-foo $stack
+                    local.set $stack_state
+                    local.get $__resolved_value__
                     call $after-await
                 catch $Exception
                   call $inside-catch
                 end
                 call $after-try-catch
+                ref.null any
+                i32.const 0
+                array.new $StackArray
+                local.get $parentScope
+                local.get $this
+                local.get $arguments
+                struct.new $function-state-foo
+                local.set $state
+                local.get $state
+                return_call $foo-loop-loop-start
+                ref.null any
+                i32.const 0
+                array.new $StackArray
+                local.get $parentScope
+                local.get $this
+                local.get $arguments
+                struct.new $function-state-foo
+                local.set $state
+                local.get $state
+                return_call $foo-block-break-end
             )"#;
 
         // Parse and add input function

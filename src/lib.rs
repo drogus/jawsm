@@ -45,7 +45,6 @@ pub mod tail_call_transformer;
 pub(crate) mod test_helpers;
 pub mod wasm;
 pub(crate) mod wat_converter;
-pub mod yield_keyword_transformer;
 
 #[derive(Clone)]
 pub enum VarType {
