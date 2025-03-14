@@ -7,6 +7,7 @@ use boa_interner::Interner;
 use boa_parser::{Parser, Source};
 use jawsm::{
     async_functions_transformer::AsyncFunctionsTransformer,
+    async_generator_functions_transformer::AsyncGeneratorFunctionsTransformer,
     await_keyword_transformer::AwaitKeywordTransformer, generate_data_string,
     generator_functions_transformer::GeneratorFunctionsTransformer,
     hoisting_transformer::HoistingTransformer, tail_call_transformer::TailCallTransformer,
@@ -59,6 +60,7 @@ fn main() -> anyhow::Result<()> {
     // can just pass the translator and access the module through the translator
     HoistingTransformer::new(&mut module).transform();
     GeneratorFunctionsTransformer::new(&mut module, &mut translator).transform();
+    AsyncGeneratorFunctionsTransformer::new(&mut module, &mut translator).transform();
     AsyncFunctionsTransformer::new(&mut module, &mut translator).transform();
     AwaitKeywordTransformer::new(&mut module).transform();
     // TailCallTransformer::new(module).transform();

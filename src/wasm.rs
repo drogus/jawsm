@@ -195,12 +195,18 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        struct AsyncGenerator {
+            properties: mut PropertyMap,
+            own_prototype: mut anyref,
+            // TODO: not sure if this has to be a Function, maybe just a reference would be enough?
+            next_callback: mut Function,
+        }
+
         struct Generator {
             properties: mut PropertyMap,
             own_prototype: mut anyref,
             // TODO: not sure if this has to be a Function, maybe just a reference would be enough?
             next_callback: mut Function,
-            foo: i32
         }
 
         struct GeneratorResult {
@@ -238,7 +244,9 @@ pub fn generate_module() -> WatModule {
         static mut global_scope: Nullable<Scope> = null;
         static mut promise_prototype: Nullable<Object> = null;
         static mut generator_prototype: Nullable<Object> = null;
+        static mut async_generator_prototype: Nullable<Object> = null;
         static mut global_generator_constructor: Nullable<Function> = null;
+        static mut global_async_generator_constructor: Nullable<Function> = null;
         static mut global_object_prototype: Nullable<Object> = null;
         static mut global_array_prototype: Nullable<Object> = null;
         static mut global_function_prototype: Nullable<Object> = null;
@@ -342,6 +350,18 @@ pub fn generate_module() -> WatModule {
 
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Generator_constructor, null));
+
+            return object;
+        }
+
+        fn create_async_generator_prototype() -> Object {
+            let object: Object = create_object();
+
+            set_property(object, data!("next"),
+                create_property_function(global_scope as Scope, AsyncGenerator_next, null));
+
+            set_property(object, data!("constructor"),
+                create_property_function(global_scope as Scope, AsyncGenerator_constructor, null));
 
             return object;
         }
@@ -998,6 +1018,52 @@ pub fn generate_module() -> WatModule {
             return new_promise;
         }
 
+        fn instantiate_promise(resolve: Function) -> Promise {
+            let constructor: Function = get_variable(global_scope as Scope, data!("Promise")) as Function;
+            let arguments: JSArgs = create_arguments_1(resolve);
+            let promise: Promise = call_function(constructor, null, arguments) as Promise;
+
+            return return_new_instance_result(promise, null, promise_prototype, constructor) as Promise;
+        }
+
+        fn AsyncGenerator_next(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // this here is generator
+            let generator: AsyncGenerator = this as AsyncGenerator;
+
+            let callback: Function = generator.next_callback;
+
+            let callback_scope: Scope = callback.scope;
+
+            // set "special" variables (not accessible from JS), but accessible through our custom
+            // generated code
+            assign_variable(callback_scope, -1, generator);
+            // yield result
+            assign_variable(callback_scope, -2, first_argument_or_null(arguments));
+
+            callback.scope = callback_scope;
+
+            let promise: Promise = instantiate_promise(callback);
+
+            return promise;
+            // let generator_result: GeneratorResult = call_function(callback, null, arguments) as GeneratorResult;
+            //
+            // let result: Object = create_object();
+            //
+            // let done: i31ref;
+            // if generator_result.done {
+            //     done = 1 as i31ref;
+            // } else {
+            //     done = 0 as i31ref;
+            // }
+            // set_property_value(result, data!("done"), done);
+            //
+            // set_property_value(result, data!("value"), generator_result.result);
+            //
+            // generator.next_callback = generator_result.next_callback;
+            //
+            // return result;
+        }
+
         fn Generator_next(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             // this here is generator
             let generator: Generator = this as Generator;
@@ -1091,6 +1157,11 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn AsyncGenerator_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: implement it
+            return null;
+        }
+
         fn Promise_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             let promise: Promise = create_new_promise();
             let resolve_func: Function;
@@ -1167,6 +1238,64 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
+        // TODO: very similar to resolve_generator_callback, we could use this one but pass
+        // null when needed
+        fn resolve_custom_generator_callback(return_value: anyref, scope: Scope, resolve: Function, callback: Function) -> anyref {
+            let generator: AsyncGenerator = get_variable(scope, -1) as AsyncGenerator;
+            let result: Object = create_object();
+
+            let done: i31ref = 0 as i31ref;
+            set_property_value(result, data!("done"), done);
+            set_property_value(result, data!("value"), return_value);
+
+            generator.next_callback = callback;
+
+            call_function(resolve, null, create_arguments_1(result));
+
+            return null;
+        }
+
+        // TODO: very similar to resolve_empty_generator_callback, we could use this one but pass
+        // null when needed
+        fn resolve_generator_callback(return_value: anyref, scope: Scope, resolve: Function) -> anyref {
+            let generator: AsyncGenerator = get_variable(scope, -1) as AsyncGenerator;
+            let callback: Function = new_function(global_scope as Scope, empty_async_generator_callback, null);
+
+            let result: Object = create_object();
+
+            let done: i31ref = 1 as i31ref;
+            set_property_value(result, data!("done"), done);
+            set_property_value(result, data!("value"), return_value);
+
+            generator.next_callback = callback;
+
+            call_function(resolve, null, create_arguments_1(result));
+
+            return null;
+        }
+
+        fn empty_async_generator_callback(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let resolve: Function = first_argument_or_null(arguments) as Function;
+            return resolve_empty_generator_callback(scope, resolve);
+        }
+
+        fn resolve_empty_generator_callback(scope: Scope, resolve: Function) -> anyref {
+            let generator: AsyncGenerator = get_variable(scope, -1) as AsyncGenerator;
+            let callback: Function = new_function(global_scope as Scope, empty_async_generator_callback, null);
+
+            let result: Object = create_object();
+
+            let done: i31ref = 1 as i31ref;
+            set_property_value(result, data!("done"), done);
+            set_property_value(result, data!("value"), null);
+
+            generator.next_callback = callback;
+
+            call_function(resolve, null, create_arguments_1(result));
+
+            return null;
+        }
+
         fn create_arguments_0() -> JSArgs {
             let arguments: JSArgs = [null; 0];
             return arguments;
@@ -1190,9 +1319,18 @@ pub fn generate_module() -> WatModule {
                 properties: create_propertymap(),
                 own_prototype: generator_prototype,
                 next_callback: callback,
-                foo: 100,
             };
             set_property(generator, data!("constructor"), create_bare_property(global_generator_constructor as Function));
+            return generator;
+        }
+
+        fn create_async_generator(callback: Function) -> anyref {
+            let generator: AsyncGenerator = AsyncGenerator {
+                properties: create_propertymap(),
+                own_prototype: async_generator_prototype,
+                next_callback: callback,
+            };
+            set_property(generator, data!("constructor"), create_bare_property(global_async_generator_constructor as Function));
             return generator;
         }
 
@@ -1775,6 +1913,8 @@ pub fn generate_module() -> WatModule {
                 return (target as Promise).properties;
             } else if ref_test!(target, Generator) {
                 return (target as Generator).properties;
+            } else if ref_test!(target, AsyncGenerator) {
+                return (target as AsyncGenerator).properties;
             } else if ref_test!(target, GlobalThis) {
                 return (target as GlobalThis).properties;
             } else if ref_test!(target, Array) {
@@ -2165,6 +2305,11 @@ pub fn generate_module() -> WatModule {
                     return;
                 }
 
+                if ref_test!(target, AsyncGenerator) {
+                    propertymap_set_sym((target as AsyncGenerator).properties, key, value_property);
+                    return;
+                }
+
                 if ref_test!(target, Array) {
                     propertymap_set_sym((target as Array).properties, key, value_property);
                     return;
@@ -2543,6 +2688,7 @@ pub fn generate_module() -> WatModule {
             let mut result: Nullable<Property> = null;
             let promise: Promise;
             let generator: Generator;
+            let async_generator: AsyncGenerator;
             let function: Function;
             let object: Object;
             let property: Property;
@@ -2556,6 +2702,9 @@ pub fn generate_module() -> WatModule {
             } else if ref_test!(target, Generator) {
                 generator = target as Generator;
                 propertymap_delete(generator.properties, name);
+            } else if ref_test!(target, AsyncGenerator) {
+                async_generator = target as AsyncGenerator;
+                propertymap_delete(async_generator.properties, name);
             } else if ref_test!(target, Promise) {
                 promise = target as Promise;
                 propertymap_delete(promise.properties, name);
@@ -2589,6 +2738,11 @@ pub fn generate_module() -> WatModule {
 
             if ref_test!(target, Generator) {
                 propertymap_set_sym((target as Generator).properties, key, property);
+                return;
+            }
+
+            if ref_test!(target, AsyncGenerator) {
+                propertymap_set_sym((target as AsyncGenerator).properties, key, property);
                 return;
             }
 
@@ -2688,6 +2842,11 @@ pub fn generate_module() -> WatModule {
                 return;
             }
 
+            if ref_test!(target, AsyncGenerator) {
+                propertymap_set((target as AsyncGenerator).properties, name, property);
+                return;
+            }
+
             if ref_test!(target, GlobalThis) {
                 let key: i32 = propertymap_set((target as GlobalThis).properties, name, property);
                 declare_variable(global_scope as Scope, key, property.value, VARIABLE_VAR);
@@ -2719,6 +2878,11 @@ pub fn generate_module() -> WatModule {
 
                 if ref_test!(target, Generator) {
                     propertymap_set((target as Generator).properties, name, value_property);
+                    return;
+                }
+
+                if ref_test!(target, AsyncGenerator) {
+                    propertymap_set((target as AsyncGenerator).properties, name, value_property);
                     return;
                 }
 
@@ -3378,6 +3542,8 @@ pub fn generate_module() -> WatModule {
                 return (target as Promise).own_prototype;
             } else if ref_test!(target, Generator) {
                 return (target as Generator).own_prototype;
+            } else if ref_test!(target, AsyncGenerator) {
+                return (target as AsyncGenerator).own_prototype;
             } else if ref_test!(target, Array) {
                 return (target as Array).own_prototype;
             } else if ref_test!(target, GlobalThis) {
@@ -3482,7 +3648,7 @@ pub fn generate_module() -> WatModule {
                 return new_static_string(data!("number"), 6);
             }
 
-            if ref_test!(arg, Object) || ref_test!(arg, Promise) || ref_test!(arg, Array) || ref_test!(arg, Generator) {
+            if ref_test!(arg, Object) || ref_test!(arg, Promise) || ref_test!(arg, Array) || ref_test!(arg, Generator) || ref_test!(arg, AsyncGenerator) {
                 return new_static_string(data!("object"), 6);
             }
 
@@ -4085,6 +4251,8 @@ pub fn generate_module() -> WatModule {
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let generator_constructor: Function = new_function(global_scope as Scope, Generator_constructor, null);
             global_generator_constructor = generator_constructor;
+            let async_generator_constructor: Function = new_function(global_scope as Scope, AsyncGenerator_constructor, null);
+            global_async_generator_constructor = async_generator_constructor;
             let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
             let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
             let symbol_constructor: Function = new_function(global_scope as Scope, Symbol_constructor, null);
@@ -4095,6 +4263,7 @@ pub fn generate_module() -> WatModule {
 
             promise_prototype = create_promise_prototype();
             generator_prototype = create_generator_prototype();
+            async_generator_prototype = create_async_generator_prototype();
             global_object_prototype = create_object_prototype();
             global_array_prototype = create_array_prototype();
             global_function_prototype = create_function_prototype();
@@ -4102,7 +4271,7 @@ pub fn generate_module() -> WatModule {
             global_symbol_prototype = create_symbol_prototype(symbol_constructor);
 
             set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
-            set_property(generator_constructor, data!("prototype"), create_bare_property(generator_prototype));
+            set_property(async_generator_constructor, data!("prototype"), create_bare_property(async_generator_prototype));
             set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
             set_property(array_constructor, data!("prototype"), create_bare_property(global_array_prototype));
             set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));

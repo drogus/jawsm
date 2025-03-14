@@ -30,7 +30,12 @@ use boa_ast::{
 use boa_interner::{Interner, Sym, ToInternedString};
 use boa_parser::{Parser, Source};
 use rand::{distributions::Alphanumeric, Rng};
-use std::{collections::HashMap, io::Read, ops::ControlFlow, process::exit};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    io::Read,
+    ops::ControlFlow,
+    process::exit,
+};
 use tarnik_ast::{
     Global, InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W,
     WatModule,
@@ -38,6 +43,7 @@ use tarnik_ast::{
 use velcro::vec;
 
 pub mod async_functions_transformer;
+pub mod async_generator_functions_transformer;
 pub mod await_keyword_transformer;
 pub mod generator_functions_transformer;
 pub mod hoisting_transformer;
@@ -75,25 +81,6 @@ fn drop_if_no_use(mut instructions: InstructionsList, will_use_return: bool) -> 
     instructions
 }
 
-pub fn gen_function_name(s: Option<String>) -> String {
-    let r: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(7)
-        .map(char::from)
-        .collect();
-
-    if let Some(s) = s {
-        let s = s
-            .strip_prefix("get ")
-            .or_else(|| s.strip_prefix("set "))
-            .or_else(|| s.strip_prefix("$"))
-            .unwrap_or(&s);
-        format!("{s}-{r}")
-    } else {
-        format!("function-{r}")
-    }
-}
-
 pub struct WasmTranslator {
     pub module: WatModule,
     pub function_stack: Vec<WatFunction>,
@@ -106,6 +93,8 @@ pub struct WasmTranslator {
     pub current_block_number: u32,
     pub async_functions: Vec<String>,
     pub generator_functions: Vec<String>,
+    pub async_generator_functions: Vec<String>,
+    pub function_name_counters: HashMap<String, u32>,
 }
 
 impl WasmTranslator {
@@ -130,6 +119,63 @@ impl WasmTranslator {
             current_block_number: 0,
             async_functions: Vec::new(),
             generator_functions: Default::default(),
+            async_generator_functions: Default::default(),
+            function_name_counters: Default::default(),
+        }
+    }
+
+    // this is exactly the same as the gen function name, but it just gets
+    // the next function, doesn't advance the counters
+    // TODO: refactor
+    pub fn next_function_name(&mut self, s: Option<String>) -> String {
+        let name = if let Some(s) = s {
+            let s = s
+                .strip_prefix("get ")
+                .or_else(|| s.strip_prefix("set "))
+                .or_else(|| s.strip_prefix("$"))
+                .unwrap_or(&s);
+            s.to_string()
+        } else {
+            format!("function")
+        };
+
+        let entry = self.function_name_counters.entry(name.clone());
+        match entry {
+            Entry::Occupied(mut occupied) => {
+                let next = occupied.get() + 1;
+                format!("{name}-{next}")
+            }
+            Entry::Vacant(vacant) => {
+                let next = 1;
+                format!("{name}-{next}")
+            }
+        }
+    }
+
+    pub fn gen_function_name(&mut self, s: Option<String>) -> String {
+        let name = if let Some(s) = s {
+            let s = s
+                .strip_prefix("get ")
+                .or_else(|| s.strip_prefix("set "))
+                .or_else(|| s.strip_prefix("$"))
+                .unwrap_or(&s);
+            s.to_string()
+        } else {
+            format!("function")
+        };
+
+        let entry = self.function_name_counters.entry(name.clone());
+        match entry {
+            Entry::Occupied(mut occupied) => {
+                let next = occupied.get() + 1;
+                occupied.insert(next);
+                format!("{name}-{next}")
+            }
+            Entry::Vacant(vacant) => {
+                let next = 1;
+                vacant.insert(next);
+                format!("{name}-{next}")
+            }
         }
     }
 
@@ -530,7 +576,8 @@ impl WasmTranslator {
         params: &FormalParameterList,
         body: &FunctionBody,
     ) -> InstructionsList {
-        let function_name = gen_function_name(name.map(|i| i.to_interned_string(&self.interner)));
+        let function_name =
+            self.gen_function_name(name.map(|i| i.to_interned_string(&self.interner)));
         let wat_function = WatFunction::new(function_name.clone());
         self.enter_function(wat_function);
 
@@ -1122,7 +1169,9 @@ impl WasmTranslator {
             Expression::AsyncFunctionExpression(f) => {
                 self.translate_async_function(f.name(), f.parameters(), f.body())
             }
-            Expression::AsyncGeneratorExpression(_async_generator) => todo!(),
+            Expression::AsyncGeneratorExpression(g) => {
+                self.translate_async_generator_function(g.name(), g.parameters(), g.body())
+            }
             Expression::ClassExpression(class) => self.translate_class(
                 class.name(),
                 class.super_ref(),
@@ -1294,7 +1343,12 @@ impl WasmTranslator {
                                 class_method_definition.parameters(),
                                 class_method_definition.body(),
                             ),
-                        boa_ast::property::MethodDefinitionKind::AsyncGenerator => todo!(),
+                        boa_ast::property::MethodDefinitionKind::AsyncGenerator => self
+                            .translate_async_generator_function(
+                                None,
+                                class_method_definition.parameters(),
+                                class_method_definition.body(),
+                            ),
                         boa_ast::property::MethodDefinitionKind::Async => self
                             .translate_async_function(
                                 None,
@@ -1593,11 +1647,22 @@ impl WasmTranslator {
             vec![W::ref_null_any()]
         };
 
-        let yield_instr = if will_use_return {
+        let current_function_name = self.current_function().name.clone();
+        let yield_instr = if self
+            .async_generator_functions
+            .contains(&current_function_name)
+        {
+            if will_use_return {
+                W::call("$__async_yield__")
+            } else {
+                W::call("$__async_yield_drop__")
+            }
+        } else if will_use_return {
             W::call("$__yield__")
         } else {
             W::call("$__yield_drop__")
         };
+
         vec![..yield_instructions, yield_instr]
     }
 
@@ -1883,7 +1948,34 @@ impl WasmTranslator {
                             }
                         }
                         boa_ast::property::MethodDefinitionKind::AsyncGenerator => {
-                            todo!()
+                            match method_definition.name() {
+                                PropertyName::Literal(sym) => {
+                                    let offset = self.add_symbol(sym.to_owned());
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        W::i32_const(offset),
+                                        ..self.translate_async_generator_function(
+                                            Some(Identifier::new(sym.to_owned())),
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value"),
+                                    ]
+                                }
+                                PropertyName::Computed(expr) => {
+                                    vec![
+                                        W::local_get(&new_instance),
+                                        ..self.translate_expression(expr, true),
+                                        W::call("$to_string"),
+                                        ..self.translate_async_generator_function(
+                                            None,
+                                            method_definition.parameters(),
+                                            method_definition.body(),
+                                        ),
+                                        W::call("$set_property_value_str"),
+                                    ]
+                                }
+                            }
                         }
                         boa_ast::property::MethodDefinitionKind::Async => {
                             match method_definition.name() {
@@ -2268,6 +2360,18 @@ impl WasmTranslator {
         result
     }
 
+    fn translate_async_generator_function(
+        &mut self,
+        name: Option<Identifier>,
+        params: &FormalParameterList,
+        body: &FunctionBody,
+    ) -> InstructionsList {
+        let next_name = self.next_function_name(name.map(|i| i.to_interned_string(&self.interner)));
+        self.async_generator_functions.push(next_name);
+        let result = self.translate_function_generic(name, params, body);
+        result
+    }
+
     fn translate_declaration(&mut self, declaration: &Declaration) -> InstructionsList {
         // println!(
         //     "translate_declaration {}",
@@ -2322,7 +2426,21 @@ impl WasmTranslator {
                 ]);
                 result
             }
-            Declaration::AsyncGeneratorDeclaration(_async_generator) => todo!(),
+            Declaration::AsyncGeneratorDeclaration(generator) => {
+                let mut declaration = self.translate_async_generator_function(
+                    Some(generator.name()),
+                    generator.parameters(),
+                    generator.body(),
+                );
+                let offset = self.add_identifier(&generator.name());
+                let mut result = vec![W::local_get("$scope"), W::i32_const(offset)];
+                result.append(&mut declaration);
+                result.append(&mut vec![
+                    W::i32_const(VarType::Var.to_i32()),
+                    W::call("$declare_variable".to_string()),
+                ]);
+                result
+            }
             Declaration::ClassDeclaration(class) => self.translate_class(
                 Some(class.name()),
                 class.super_ref(),
