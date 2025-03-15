@@ -24,7 +24,7 @@ When I started the project I listed four features of the language that I think a
 3. async/await
 4. generators
 
-Since then I've been able to implement all four of them with an exception of a combination of async and generators, ie. async generators, but support for async generators should be coming soon.
+All of these are now implemented and thus I will now be focusing on implementing more of the smaller features and more builtins.
 
 A non exhaustive list of other stuff that should work:
 
@@ -45,10 +45,10 @@ A non exhaustive list of other stuff that should work:
 
 A few notable things that are missing at the moment:
 
-* async generators
 * most of the builtins and most of the methods on existing builtins
 * RegExp expressions
 * BigInt literals
+* a lot of edge cases are not handled yet, for example equality comparison works only for the simplest cases
 
 ### Host requirements
 
@@ -71,19 +71,18 @@ It requires Rust's `cargo`, relatively new version of `wasm-tools` and Node.js v
 
 ### What's next?
 
-The current plan is to implement the following, in roughly the given order:
+The current plan is to implement the following:
 
-* async generators
 * Basic regexp support (ie. RegExp literals and some very basic functions on the RegExp object)
 * BigInt literals and basic support for BigInts
 * Better support for automatic casting, for example when checking equality or using various operators
-* More functions at basic builtins: arrays, strings etc.
+* More functions for basic builtins: arrays, strings etc.
 
 ### How does it work?
 
-The project is essentially translating JavaScript syntax into WASM instructions, leveraging instructions added by WASM GC, exception handling and tail call optimizations proposals. On top of the Rust code that is translating JavaScript code, there is about 3k lines of WAT code with all the plumbing needed to translate JavaScript semantics into WASM.
+The project is essentially translating JavaScript syntax into WASM instructions, leveraging instructions added by WASM GC, exception handling and tail call optimizations proposals. On top of the Rust code that is translating a script, there is also a set of types and functions that are the plumbing needed to translate JavaScript semantics into WASM. Most of the WASM instructions are generated using [tarnik](https://github.com/drogus/tarnik) - a Rust macro that generates WASM instructions based on a Rust-like syntax.
 
-To give an example let's consider scopes and closures. WASM has support for passing function references and for structs and arrays, but it doesn't have the scopes semantics that JavaScript has. Thus, we need to simulate how scopes work, by adding some extra WASM code. Imagine the following JavaScript code:
+To give an example, let's consider scopes and closures. WASM has support for passing function references, structs, and arrays, but it doesn't have the scopes semantics that JavaScript has. Thus, we need to simulate how scopes work, by adding extra WASM code. Imagine the following JavaScript code:
 
 ```Javascript
 let a = "foo";
@@ -126,8 +125,6 @@ declareVariable(scope, "bar", fObject)
 let f = retrieve(scope, "bar");
 call(f);
 ```
-
-All of the helpers needed to make it work are hand written in WAT format. I have some ideas on how to make it more efficient, but before I can validate all the major features I didn't want to invest too much time into side quests. Writing WAT by hand is not that hard, too, especially when you consider WASM GC.
 
 ### Sponsors
 
