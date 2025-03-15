@@ -2464,6 +2464,8 @@ impl WasmTranslator {
         (offset as i32, length as i32)
     }
 
+    // TODO: handle await variant of for loop
+    // TODO: handle calling return() on the iterator
     fn translate_for_of_loop(&mut self, for_of_loop: &ForOfLoop) -> InstructionsList {
         self.enter_block();
 
