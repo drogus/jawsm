@@ -349,6 +349,9 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("next"),
                 create_property_function(global_scope as Scope, Generator_next, null));
 
+            set_property_sym(object, symbol_iterator,
+                create_property_function(global_scope as Scope, Generator_iterator, null));
+
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Generator_constructor, null));
 
@@ -1063,6 +1066,10 @@ pub fn generate_module() -> WatModule {
             // generator.next_callback = generator_result.next_callback;
             //
             // return result;
+        }
+
+        fn Generator_iterator(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return this;
         }
 
         fn Generator_next(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
