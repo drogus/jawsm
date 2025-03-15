@@ -260,6 +260,7 @@ pub fn generate_module() -> WatModule {
             length: 0
         };
         static symbol_iterator: Symbol = Symbol {};
+        static symbol_async_iterator: Symbol = Symbol {};
         static mut thenables: Thenables = [null; 5];
 
         // Memory management functions required by the Component Model
@@ -4280,6 +4281,7 @@ pub fn generate_module() -> WatModule {
             set_property(array_constructor, data!("prototype"), create_bare_property(global_array_prototype));
             set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
             set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));
+            set_property(symbol_constructor, data!("asyncIterator"), create_bare_property(symbol_async_iterator));
 
             let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype)) as Object;
             set_property_value(error_prototype, data!("constructor"), error_constructor);
