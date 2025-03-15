@@ -94,7 +94,8 @@ fn transform_generator_function(
     function.add_local_exact("$__generator_resolve__", WasmType::r#ref("$Function"));
     function.add_local_exact("$resolve-call-argument", WasmType::Anyref);
 
-    while cursor.next() != Some(W::call("$declare_arguments")) {}
+    while cursor.next() != Some(W::call("$arguments_declared")) {}
+
     let start = cursor.current_position() + 1;
     while cursor.next().is_some() {}
     let end = cursor.current_position();

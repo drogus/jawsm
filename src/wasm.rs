@@ -1732,6 +1732,10 @@ pub fn generate_module() -> WatModule {
             }
         }
 
+        // this is a dummy function that I will use to figure out where does the arguments
+        // definitions end
+        fn arguments_declared() {}
+
         fn declare_arguments(scope: Scope, arguments: JSArgs) {
             let mut i: i32 = 0;
             let len: i32 = len!(arguments);

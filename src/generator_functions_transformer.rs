@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use tarnik_ast::{
-    cursor::InstructionsCursor, FunctionKey, IndexMap, InstructionsList, Nullable, WasmType,
-    WatFunction, WatInstruction as W, WatModule,
+    cursor::InstructionsCursor, FunctionKey, IndexMap, InstructionsList, Nullable, VecDebug,
+    WasmType, WatFunction, WatInstruction as W, WatModule,
 };
 use velcro::vec;
 
@@ -95,14 +95,15 @@ fn transform_generator_function(
     function.add_local_exact("$__yield_result__", WasmType::Anyref);
     function.add_local_exact("$resolve-call-argument", WasmType::Anyref);
 
-    while cursor.next() != Some(W::call("$declare_arguments")) {}
+    // we need to leave arguments declaration so that we don't loose them later
+    while cursor.next() != Some(W::call("$arguments_declared")) {}
+
     let start = cursor.current_position() + 1;
     while cursor.next().is_some() {}
     let end = cursor.current_position();
 
     let new_generator_instructions = vec![
-        W::global_get("$global_scope"),
-        W::ref_cast(WasmType::r#ref("$Scope")),
+        W::local_get("$scope"),
         W::ref_func(format!("${callback_name}")),
         // TODO: I'm not sure if this is should be undefined, but for now it seems fine
         W::ref_null_any(),
@@ -118,9 +119,6 @@ fn transform_generator_function(
     let callback_body = vec![
         W::local_get("$parentScope"),
         W::local_set("$scope"),
-        W::local_get("$arguments"),
-        W::call("$first_argument_or_null"),
-        W::local_set("$__yield_result__"),
         ..old_body,
         // if nothing was returned, return an empty generator result
         W::return_call("$empty_generator_callback"),

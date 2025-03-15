@@ -620,6 +620,10 @@ impl WasmTranslator {
             self.current_function().add_instructions(instructions);
         }
 
+        // add a dummy call to know that we're done with arguments declaration
+        self.current_function()
+            .add_instruction(W::call("$arguments_declared"));
+
         for statement in body.statements() {
             match statement {
                 boa_ast::StatementListItem::Statement(statement) => {
