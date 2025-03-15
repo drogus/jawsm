@@ -2573,6 +2573,11 @@ impl WasmTranslator {
             W::local_tee(&iterator_result),
             W::call("$get_iterator_result_value"),
             W::local_set(&current),
+            // check if we're done, it has to happen before processing cause done: true
+            // element is ignored
+            W::local_get(&iterator_result),
+            W::call("$is_iterator_done"),
+            W::br_if(&current_loop_break_name),
             // execute variable initializer
             ..initializer,
             // when using continue, we can't skip all the initialization and
@@ -2595,10 +2600,6 @@ impl WasmTranslator {
                     W::local_set("$scope"),
                 ],
             ),
-            // check if we're done
-            W::local_get(&iterator_result),
-            W::call("$is_iterator_done"),
-            W::br_if(&current_loop_break_name),
             // scope cleanup
             W::local_get("$scope"),
             W::call("$extract_parent_scope"),
