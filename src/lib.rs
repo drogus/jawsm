@@ -1268,11 +1268,23 @@ impl WasmTranslator {
             "$constructor",
             WasmType::Ref("$Function".to_string(), Nullable::True),
         );
+        let super_prototype_local = self
+            .current_function()
+            .add_local("$super-prototype", WasmType::Anyref);
         let prototype_local = self
             .current_function()
             .add_local("$prototype", WasmType::Anyref);
 
-        constructor_instructions.push(W::local_set(&constructor_local));
+        constructor_instructions.append(&mut vec![
+            W::local_tee(&constructor_local),
+            W::ref_cast(WasmType::r#ref("$Function")),
+            W::i32_const(self.insert_data_string("prototype").0),
+            W::call("$get_property_value"),
+            W::local_set(&prototype_local),
+            // W::I32Const(self.insert_data_string("constructor").0),
+            // W::local_get(&constructor_local),
+            // W::call("$set_property_value"),
+        ]);
 
         if let Some(super_expr) = super_ref {
             let superclass_instructions = self.translate_expression(super_expr, true);
@@ -1281,23 +1293,25 @@ impl WasmTranslator {
                 W::local_get(&constructor_local),
                 W::I32Const(self.insert_data_string("prototype").0),
                 ..superclass_instructions,
+                W::local_tee(&super_prototype_local),
                 W::I32Const(self.insert_data_string("prototype").0),
                 W::call("$get_property_value"),
                 W::call("$Object_create_simple"),
+                // this is our new prototype
+                W::local_tee(&prototype_local),
                 W::call("$set_property_value"),
+                // Subclass.prototype.constructor = Subclass
+                W::local_get(&constructor_local),
+                W::I32Const(self.insert_data_string("prototype").0),
+                W::call("$get_property_value"),
+                W::I32Const(self.insert_data_string("constructor").0),
+                W::local_get(&constructor_local),
+                W::call("$set_property_value"),
+                W::local_get(&constructor_local),
+                W::local_get(&super_prototype_local),
+                W::call("$set_own_prototype"),
             ]);
         }
-
-        constructor_instructions.append(&mut vec![
-            W::local_get(&constructor_local),
-            W::ref_cast(WasmType::r#ref("$Function")),
-            W::i32_const(self.insert_data_string("prototype").0),
-            W::call("$get_property_value"),
-            W::local_tee(&prototype_local),
-            W::I32Const(self.insert_data_string("constructor").0),
-            W::local_get(&constructor_local),
-            W::call("$set_property_value"),
-        ]);
 
         for element in elements {
             match element {

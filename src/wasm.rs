@@ -468,8 +468,15 @@ pub fn generate_module() -> WatModule {
             set_property(constructor, data!("create"),
                 create_property_function(global_scope as Scope, Object_create, null));
 
+            set_property(constructor, data!("getPrototypeOf"),
+                create_property_function(global_scope as Scope, Object_getPrototypeOf, null));
+
             set_property(constructor, data!("defineProperty"),
                 create_property_function(global_scope as Scope, Object_defineProperty, null));
+        }
+
+        fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            return get_own_prototype(first_argument_or_null(arguments));
         }
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -601,7 +608,8 @@ pub fn generate_module() -> WatModule {
 
         fn get_super(this: anyref) -> anyref {
             let constructor: anyref = get_property_value(this, data!("constructor"));
-            let prototype: anyref = get_property_value(constructor, data!("prototype"));
+            let own_prototype: anyref = get_own_prototype(constructor);
+            let prototype: anyref = get_property_value(own_prototype, data!("prototype"));
             return prototype;
         }
 
@@ -1356,15 +1364,15 @@ pub fn generate_module() -> WatModule {
             if ref_test!(result, Object) {
                 object = result as Object;
                 object.own_prototype = prototype;
-                set_property(object, data!("constructor"), create_bare_property(constructor));
+                //set_property(object, data!("constructor"), create_bare_property(constructor));
             } else if ref_test!(result, Promise) {
                 promise = result as Promise;
                 promise.own_prototype = prototype;
-                set_property(promise, data!("constructor"), create_bare_property(constructor));
+                //set_property(promise, data!("constructor"), create_bare_property(constructor));
             } else if ref_test!(result, Array) {
                 array = result as Array;
                 array.own_prototype = prototype;
-                set_property(array, data!("constructor"), create_bare_property(constructor));
+                //set_property(array, data!("constructor"), create_bare_property(constructor));
             }
 
             return result;
@@ -1642,8 +1650,9 @@ pub fn generate_module() -> WatModule {
                 own_prototype: global_function_prototype
             };
 
-            // TODO: this should also have a constructor set
-            set_property(f, data!("prototype"), create_property(create_object()));
+            let prototype: Object = create_object();
+            set_property(f, data!("prototype"), create_property(prototype));
+            set_property(prototype, data!("constructor"), create_property(f));
 
             return f;
         }
@@ -3543,6 +3552,24 @@ pub fn generate_module() -> WatModule {
             // }
 
             return 0 as i31ref;
+        }
+
+        fn set_own_prototype(target: anyref, prototype: anyref) {
+             if ref_test!(target, Object) {
+                return (target as Object).own_prototype = prototype;
+            } else if ref_test!(target, Function) {
+                return (target as Function).own_prototype = prototype;
+            } else if ref_test!(target, Promise) {
+                return (target as Promise).own_prototype = prototype;
+            } else if ref_test!(target, Generator) {
+                return (target as Generator).own_prototype = prototype;
+            } else if ref_test!(target, AsyncGenerator) {
+                return (target as AsyncGenerator).own_prototype = prototype;
+            } else if ref_test!(target, Array) {
+                return (target as Array).own_prototype = prototype;
+            }// else if ref_test!(target, GlobalThis) {
+            //     return (target as GlobalThis).own_prototype = prototype;
+            // }
         }
 
         fn get_own_prototype(target: anyref) -> anyref {
