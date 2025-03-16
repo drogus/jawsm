@@ -1274,20 +1274,6 @@ impl WasmTranslator {
 
         constructor_instructions.push(W::local_set(&constructor_local));
 
-        if let Some(name) = name {
-            let offset = self.add_identifier(&name);
-            // we have a name, which means it's a declaration
-            constructor_instructions.append(&mut vec![
-                W::global_get("$global_scope"),
-                W::ref_cast(WasmType::Ref("$Scope".to_string(), Nullable::False)),
-                W::i32_const(offset),
-                W::local_get(&constructor_local),
-                W::ref_cast(WasmType::r#ref("$Function")),
-                W::i32_const(VarType::Const.to_i32()),
-                W::call("$declare_variable"),
-            ]);
-        }
-
         if let Some(super_expr) = super_ref {
             let superclass_instructions = self.translate_expression(super_expr, true);
 
@@ -1589,6 +1575,26 @@ impl WasmTranslator {
             .prepend_instructions(additional_constructor_instructions);
 
         constructor_instructions.append(&mut static_block_instructions);
+
+        if will_use_return {
+            constructor_instructions.push(W::local_get(&constructor_local));
+        } else {
+            if let Some(name) = name {
+                let offset = self.add_identifier(&name);
+                // we have a name, which means it's a declaration
+                constructor_instructions.append(&mut vec![
+                    W::global_get("$global_scope"),
+                    W::ref_cast(WasmType::Ref("$Scope".to_string(), Nullable::False)),
+                    W::i32_const(offset),
+                    W::local_get(&constructor_local),
+                    W::ref_cast(WasmType::r#ref("$Function")),
+                    W::i32_const(VarType::Const.to_i32()),
+                    W::call("$declare_variable"),
+                ]);
+            } else {
+                unreachable!("class declaration without a name is not possible");
+            }
+        }
 
         constructor_instructions
     }
