@@ -2869,7 +2869,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn set_property_value(target: anyref, name: i32, value: anyref) {
-            let property: Nullable<Property> = get_property(target, name);
+            let property: Nullable<Property> = get_own_property(target, name);
             let value_property: Property;
             if ref_test!(property, null) {
                 value_property = create_property(value);
