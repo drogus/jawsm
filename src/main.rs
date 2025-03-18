@@ -76,7 +76,7 @@ fn main() -> anyhow::Result<()> {
     // }
 
     let data_str = generate_data_string(&module.data);
-    let (offset, _) = module.add_data(data_str);
+    let (offset, _) = module.add_data(data_str.as_bytes().to_vec());
 
     // at the moment we don't have a way to inject stuff into WASM macro, so we change the right
     // global afterwards
