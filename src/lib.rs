@@ -40,6 +40,7 @@ use tarnik_ast::{
     Global, InstructionsList, Nullable, Signature, WasmType, WatFunction, WatInstruction as W,
     WatModule,
 };
+use utf16string::{LittleEndian, WString};
 use velcro::vec;
 
 pub mod async_functions_transformer;
@@ -87,7 +88,7 @@ pub struct WasmTranslator {
     pub interner: Interner,
     pub functions: HashMap<String, String>,
     pub init_code: Vec<String>,
-    pub string_offsets: HashMap<String, i32>,
+    pub string_offsets: HashMap<Vec<u8>, i32>,
     pub data_offset: i32,
     pub identifiers_map: HashMap<i32, i32>,
     pub current_block_number: u32,
@@ -186,18 +187,23 @@ impl WasmTranslator {
         // we won't likely need the entire space
         1_000_000_000 + offset
     }
-    fn add_new_symbol(&mut self, sym: Sym, value: &str) -> i32 {
+    fn add_new_symbol(&mut self, sym: Sym, value: &[u16]) -> i32 {
         if let Some(offset) = self.identifiers_map.get(&(sym.get() as i32)) {
             *offset
         } else {
-            let (offset, _) = self.module.add_data(value.to_string());
+            let (offset, _) = self.module.add_data(bytemuck::cast_slice(value).to_vec());
             self.identifiers_map.insert(sym.get() as i32, offset as i32);
             offset as i32
         }
     }
 
     fn add_symbol(&mut self, sym: Sym) -> i32 {
-        self.add_new_symbol(sym, &self.interner.resolve(sym).unwrap().to_string())
+        let value = self.interner.resolve(sym).unwrap().to_string();
+        let utf16_string: WString<LittleEndian> = WString::from(&value);
+        let bytes = utf16_string.into_bytes();
+        let value = bytemuck::cast_slice(&bytes);
+
+        self.add_new_symbol(sym, &value)
     }
 
     fn add_identifier(&mut self, identifier: &Identifier) -> i32 {
@@ -2480,7 +2486,17 @@ impl WasmTranslator {
     }
 
     pub fn insert_data_string(&mut self, s: &str) -> (i32, i32) {
-        let (offset, length) = self.module.add_data(s.to_string());
+        if s.is_empty() {
+            (-1, 0)
+        } else {
+            let utf16_string: WString<LittleEndian> = WString::from(s);
+            let bytes = utf16_string.into_bytes();
+            let value = bytemuck::cast_slice(&bytes);
+            self.insert_data(value)
+        }
+    }
+    pub fn insert_data(&mut self, s: &[u16]) -> (i32, i32) {
+        let (offset, length) = self.module.add_data(bytemuck::cast_slice(s).to_vec());
         (offset as i32, length as i32)
     }
 
@@ -3241,38 +3257,35 @@ impl<'a> Visitor<'a> for WasmTranslator {
     }
 }
 
-pub fn generate_data_string(pairs: &[(usize, String)]) -> String {
-    let mut result = String::new();
+pub fn generate_data_string(pairs: &[(usize, Vec<u8>)]) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::new();
 
     // First 4 bytes - length of entries (little-endian)
     let len = pairs.len() as i32;
-    result.push_str(&format!(
-        "\\{:02x}\\{:02x}\\{:02x}\\{:02x}",
-        len & 0xff, // Least significant byte first
-        (len >> 8) & 0xff,
-        (len >> 16) & 0xff,
-        (len >> 24) & 0xff // Most significant byte last
-    ));
+    result.append(&mut vec![
+        (len & 0xff) as u8, // Least significant byte first
+        ((len >> 8) & 0xff) as u8,
+        ((len >> 16) & 0xff) as u8,
+        ((len >> 24) & 0xff) as u8, // Most significant byte last
+    ]);
 
     // For each pair, add offset (4 bytes) and length (4 bytes)
     for (offset, str) in pairs {
         let offset = *offset as i32;
-        result.push_str(&format!(
-            "\\{:02x}\\{:02x}\\{:02x}\\{:02x}",
-            offset & 0xff, // Least significant byte first
-            (offset >> 8) & 0xff,
-            (offset >> 16) & 0xff,
-            (offset >> 24) & 0xff // Most significant byte last
-        ));
+        result.append(&mut vec![
+            (offset & 0xff) as u8, // Least significant byte first
+            ((offset >> 8) & 0xff) as u8,
+            ((offset >> 16) & 0xff) as u8,
+            ((offset >> 24) & 0xff) as u8, // Most significant byte last
+        ]);
 
         let len = str.len() as i32;
-        result.push_str(&format!(
-            "\\{:02x}\\{:02x}\\{:02x}\\{:02x}",
-            len & 0xff, // Least significant byte first
-            (len >> 8) & 0xff,
-            (len >> 16) & 0xff,
-            (len >> 24) & 0xff // Most significant byte last
-        ));
+        result.append(&mut vec![
+            (len & 0xff) as u8, // Least significant byte first
+            ((len >> 8) & 0xff) as u8,
+            ((len >> 16) & 0xff) as u8,
+            ((len >> 24) & 0xff) as u8, // Most significant byte last
+        ]);
     }
 
     result

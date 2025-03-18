@@ -3760,6 +3760,64 @@ pub fn generate_module() -> WatModule {
             }
             return null;
         }
+
+        // Function to convert little-endian UTF-16 to UTF-8
+        // Parameters:
+        //   $src_offset: pointer to UTF-16 encoded string (little-endian)
+        //   $src_length: length of UTF-16 string in bytes
+        //   $dst_offset: pointer to output buffer for UTF-8 string
+        // Returns:
+        //   Length of the resulting UTF-8 string in bytes
+        fn utf16le_to_utf8(src_offset: i32, src_length: i32, dst_offset: i32) -> i32 {
+            let mut i: i32 = 0;
+            let mut j: i32 = 0;
+            let mut code_unit: i32;
+            let mut code_point: i32;
+            let mut high_surrogate: i32;
+
+            while i < src_length {
+                // load current code unit
+                code_unit = memory::<u16>[src_offset + i];
+                i = i + 2;
+                if code_unit >= 0xD800 && code_unit <= 0xDBFF {
+                    // code unit is a high surrogate
+                    high_surrogate = code_unit;
+                    code_unit = memory::<u16>[src_offset + i];
+                    i = i + 2;
+
+                    code_point = ((high_surrogate - 0xD800) << 10) + (code_unit - 0xDC00) + 0x10000;
+                } else {
+                    code_point = code_unit;
+                }
+
+                if code_point < 0x80 {
+                    // 1 byte: 0xxxxxxx
+                    memory::<i8>[dst_offset + j] = code_point;
+                    j += 1;
+                } else if code_point < 0x800 {
+                    // 2 bytes: 110xxxxx 10xxxxxx
+                    memory::<i8>[dst_offset + j] = 0xC0 | (code_point >> 6);
+                    memory::<i8>[dst_offset + j + 1] = 0x80 | (code_point & 0x3F);
+                    j += 2;
+                } else if code_point < 0x10000 {
+                    // 3 bytes: 1110xxxx 10xxxxxx 10xxxxxx
+                    memory::<i8>[dst_offset + j] = 0xE0 | (code_point >> 12);
+                    memory::<i8>[dst_offset + j + 1] = 0x80 | ((code_point >> 6) & 0x3F);
+                    memory::<i8>[dst_offset + j + 2] = 0x80 | (code_point & 0x3F);
+                    j += 3;
+                } else {
+                    // 4 bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+                    memory::<i8>[dst_offset + j] = 0xF0 | (code_point >> 18);
+                    memory::<i8>[dst_offset + j + 1] = 0x80 | ((code_point >> 12) & 0x3F);
+                    memory::<i8>[dst_offset + j + 2] = 0x80 | ((code_point >> 6) & 0x3F);
+                    memory::<i8>[dst_offset + j + 3] = 0x80 | (code_point & 0x3F);
+                    j += 4;
+                }
+            }
+
+            return j;
+        }
+
         fn writeF64AsAscii(value: f64, offset: i32) -> i32 {
             let mut current_offset: i32 = offset;
             let mut remaining_value: f64 = value;
@@ -3848,7 +3906,8 @@ pub fn generate_module() -> WatModule {
             let mut number: Number;
             let mut static_str: StaticString;
             let mut str: String;
-            let mut str_len: i32;
+            let mut str_len: i32 = 0;
+            let mut str_utf8_len: i32 = 0;
             let mut j: i32;
             let mut str_data: CharArray;
 
@@ -3912,8 +3971,11 @@ pub fn generate_module() -> WatModule {
                 // Handle StaticString
                 if ref_test!(current, StaticString) {
                     static_str = current as StaticString;
-                    memory[iovectors_offset] = static_str.offset;
-                    memory[iovectors_offset + 4] = static_str.length;
+                    str_utf8_len = utf16le_to_utf8(static_str.offset, static_str.length, offset);
+                    memory[iovectors_offset] = offset;
+                    memory[iovectors_offset + 4] = str_utf8_len;
+                    // we wrote to memory, now we have to advance the offset
+                    offset += str_utf8_len;
                     iovectors_offset += 8;
                     handled = 1;
                 }
@@ -3923,9 +3985,6 @@ pub fn generate_module() -> WatModule {
                     str = current as String;
                     str_len = str.length;
 
-                    memory[iovectors_offset] = offset;
-                    memory[iovectors_offset + 4] = str_len;
-
                     // Copy string data to memory
                     j = 0;
                     str_data = str.data;
@@ -3934,7 +3993,13 @@ pub fn generate_module() -> WatModule {
                         j += 1;
                     }
 
-                    offset += str_len;
+                    str_utf8_len = utf16le_to_utf8(offset, str_len, offset + str_len);
+
+                    memory[iovectors_offset] = offset + str_len;
+                    memory[iovectors_offset + 4] = str_utf8_len;
+
+                    offset += str_len + str_utf8_len;
+
                     iovectors_offset += 8;
                     handled = 1;
                 }
