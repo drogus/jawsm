@@ -480,11 +480,11 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_static_string(data!("[object Object]"), 15);
+            return new_static_string(data!("[object Object]"), 30);
         }
 
         fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_static_string(data!("<TODO: array>"), 15);
+            return new_static_string(data!("<TODO: array>"), 30);
         }
 
         fn Object_create_simple(value: anyref) -> anyref {
@@ -704,7 +704,7 @@ pub fn generate_module() -> WatModule {
             }
             // let new_instance: Object = create_object();
             set_property_value(this, data!("message"), message);
-            set_property_value(this, data!("name"), new_static_string(data!("Error"), 5));
+            set_property_value(this, data!("name"), new_static_string(data!("Error"), 10));
 
             return this;
         }
@@ -714,7 +714,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("ReferenceError"), 14));
+            set_property_value(this, data!("name"), new_static_string(data!("ReferenceError"), 28));
 
             return this;
         }
@@ -724,7 +724,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 9));
+            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 18));
 
             return this;
         }
@@ -734,7 +734,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 11));
+            set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 22));
 
             return this;
         }
@@ -800,7 +800,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_static_string(data!("function () { [native code] }"), 29);
+            return new_static_string(data!("function () { [native code] }"), 58);
         }
 
         fn create_number_prototype() -> Object {
@@ -1875,7 +1875,7 @@ pub fn generate_module() -> WatModule {
         fn create_reference_error(name: i32) -> anyref {
             let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
             let object: Object = create_object();
-            let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 24));
+            let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 48));
             call_function(constructor, object, arguments);
 
             return return_new_instance_result(object, null, get_property(constructor, data!("prototype")), constructor);
@@ -3672,34 +3672,34 @@ pub fn generate_module() -> WatModule {
 
         fn type_of(arg: anyref) -> StaticString {
             if ref_test!(arg, null) {
-                return new_static_string(data!("undefined"), 9);
+                return new_static_string(data!("undefined"), 18);
             }
 
             if ref_test!(arg, i31ref) {
                 let val: i32 = arg as i31ref as i32;
                 if val == 0 || val == 1 {
-                    return new_static_string(data!("boolean"), 7);
+                    return new_static_string(data!("boolean"), 14);
                 }
-                return new_static_string(data!("undefined"), 9);
+                return new_static_string(data!("undefined"), 18);
             }
 
             if ref_test!(arg, Number) {
-                return new_static_string(data!("number"), 6);
+                return new_static_string(data!("number"), 12);
             }
 
             if ref_test!(arg, Object) || ref_test!(arg, Promise) || ref_test!(arg, Array) || ref_test!(arg, Generator) || ref_test!(arg, AsyncGenerator) {
-                return new_static_string(data!("object"), 6);
+                return new_static_string(data!("object"), 12);
             }
 
             if ref_test!(arg, StaticString) {
-                return new_static_string(data!("string"), 6);
+                return new_static_string(data!("string"), 12);
             }
 
             if ref_test!(arg, Function) {
-                return new_static_string(data!("function"), 8);
+                return new_static_string(data!("function"), 16);
             }
 
-            return new_static_string(data!("undefined"), 9);
+            return new_static_string(data!("undefined"), 18);
         }
 
         fn less_than_or_equal(arg1: anyref, arg2: anyref) -> i31ref {
@@ -4430,13 +4430,13 @@ pub fn generate_module() -> WatModule {
 
                 if !ref_test!(message, null) {
                     let args: JSArgs = create_arguments_2(
-                        new_static_string(data!("error encountered"), 17),
+                        new_static_string(data!("error encountered"), 34),
                         message
                     );
                     log(args);
                 } else {
                     let args: JSArgs = create_arguments_2(
-                        new_static_string(data!("error encountered"), 17),
+                        new_static_string(data!("error encountered"), 34),
                         error
                     );
                     log(args);
