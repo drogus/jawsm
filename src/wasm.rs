@@ -37,7 +37,7 @@ pub fn generate_module() -> WatModule {
 
         static mut global_strict_mode: i32 = 0;
 
-        type CharArray = [mut i8];
+        type CharArray = [mut i32];
 
         struct String {
             data: mut CharArray,
@@ -830,7 +830,7 @@ pub fn generate_module() -> WatModule {
             // TODO: technically we could read bigger values and split them into i8s
             let mut i: i32 = 0;
             while i < length {
-                string_data[i] = memory::<i8>[offset + i];
+                string_data[i] = memory::<u16>[offset + (i * 2)];
                 i += 1;
             }
 
@@ -1385,7 +1385,7 @@ pub fn generate_module() -> WatModule {
 
             let i: i32 = 0;
             while i < length {
-                data[i] = memory::<i8>[offset + i];
+                data[i] = memory::<u16>[offset + (i * 2)];
                 i += 1;
             }
 
@@ -1402,14 +1402,14 @@ pub fn generate_module() -> WatModule {
 
             // Copy first part
             while i < len1 {
-                string_data[i] = memory::<i8>[ptr1 + i];
+                string_data[i] = memory::<u16>[ptr1 + (i * 2)];
                 i += 1;
             }
 
             // Copy second part
             i = 0;
             while i < len2 {
-                string_data::<i8>[len1 + i] = memory::<i8>[ptr2 + i];
+                string_data::<u16>[len1 + (i * 2)] = memory::<u16>[ptr2 + (i * 2)];
                 i += 1;
             }
 
@@ -1441,7 +1441,7 @@ pub fn generate_module() -> WatModule {
 
             i = 0;
             while i < len {
-                new_string_data[str_len + i] = memory::<i8>[ptr + i];
+                new_string_data[str_len + i] = memory::<u16>[ptr + (i * 2)];
                 i += 1;
             }
 
@@ -1462,7 +1462,7 @@ pub fn generate_module() -> WatModule {
             // TODO: replace with array.copy when implemented
             let mut i: i32 = 0;
             while i < static_string_length {
-                new_string_data[i] = memory::<i8>[static_string_offset + i];
+                new_string_data[i] = memory::<u16>[static_string_offset + (i * 2)];
                 i += 1;
             }
 
@@ -2624,6 +2624,7 @@ pub fn generate_module() -> WatModule {
 
         fn get_property_or_array_value(target: anyref, prop_name: anyref) -> anyref {
             if ref_test!(target, Array) {
+                // TODO: string that converts to a number should also fetch an element
                 if ref_test!(prop_name, Number) {
                     // TODO: this will cast to i32, which will essentially get rid of the
                     // fraction. In case the Number is *not* an integer it shouldn't be treated as
@@ -2647,6 +2648,7 @@ pub fn generate_module() -> WatModule {
 
         fn set_property_or_array_value(target: anyref, prop_name: anyref, value: anyref) {
             if ref_test!(target, Array) {
+                // TODO: string that converts to a number should also set an element
                 if ref_test!(prop_name, Number) {
                     // TODO: this will cast to i32, which will essentially get rid of the
                     // fraction. In case the Number is *not* an integer it shouldn't be treated as
@@ -3483,7 +3485,7 @@ pub fn generate_module() -> WatModule {
                 offset = static_str1.offset;
                 char_array2 = str2.data;
                 while i < len {
-                    if memory::<i8>[offset + i] != char_array2[i] {
+                    if memory::<u16>[offset + (i * 2)] != char_array2[i] {
                         return 0 as i31ref;
                     }
                     i += 1;
@@ -3919,7 +3921,7 @@ pub fn generate_module() -> WatModule {
                 // Handle undefined
                 if ref_test!(current, null) {
                     memory[iovectors_offset] = data!("undefined");
-                    memory[iovectors_offset + 4] = 9;
+                    memory[iovectors_offset + 4] = 18;
                     iovectors_offset += 8;
                     handled = 1;
                 }
@@ -3929,17 +3931,27 @@ pub fn generate_module() -> WatModule {
                     val = current as i31ref as i32;
                     if val == 0 {
                         memory[iovectors_offset] = data!("false");
-                        memory[iovectors_offset + 4] = 5;
+                        memory[iovectors_offset + 4] = 10;
                         iovectors_offset += 8;
                         handled = 1;
                     } else if val == 1 {
                         memory[iovectors_offset] = data!("true");
-                        memory[iovectors_offset + 4] = 4;
+                        memory[iovectors_offset + 4] = 8;
                         iovectors_offset += 8;
                         handled = 1;
                     } else if val == 2 {
                         memory[iovectors_offset] = data!("null");
-                        memory[iovectors_offset + 4] = 4;
+                        memory[iovectors_offset + 4] = 8;
+                        iovectors_offset += 8;
+                        handled = 1;
+                    } else if val == 3 {
+                        memory[iovectors_offset] = data!("empty");
+                        memory[iovectors_offset + 4] = 10;
+                        iovectors_offset += 8;
+                        handled = 1;
+                    } else if val == 4 {
+                        memory[iovectors_offset] = data!("NaN");
+                        memory[iovectors_offset + 4] = 6;
                         iovectors_offset += 8;
                         handled = 1;
                     } else {
@@ -4214,7 +4226,7 @@ pub fn generate_module() -> WatModule {
                     data = [0; current_length];
                     j = 0;
                     while j < current_length {
-                        data[j] = memory::<i8>[current_offset + j];
+                        data[j] = memory::<u16>[current_offset + (j * 2)];
                         j+=1;
                     }
 
@@ -4253,12 +4265,12 @@ pub fn generate_module() -> WatModule {
                     j = 0;
                     found = 1;
                     while j < str_length {
-                        if memory::<i8>[str_offset + j] != memory::<i8>[current_offset + j] {
+                        if memory::<u16>[str_offset + j] != memory::<u16>[current_offset + j] {
                             found = 0;
                             j = str_length; // poor man's break
                         }
 
-                        j += 1;
+                        j += 2;
                     }
 
                     if found {
@@ -4294,7 +4306,7 @@ pub fn generate_module() -> WatModule {
                     j = 0;
                     found = 1;
                     while j < str_length {
-                        if memory::<i8>[str_offset + j] != str[j] {
+                        if memory::<u16>[str_offset + (j * 2)] != str[j] {
                             found = 0;
                             j = str_length; // poor man's break
                         }

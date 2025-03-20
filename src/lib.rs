@@ -2496,7 +2496,8 @@ impl WasmTranslator {
         }
     }
     pub fn insert_data(&mut self, s: &[u16]) -> (i32, i32) {
-        let (offset, length) = self.module.add_data(bytemuck::cast_slice(s).to_vec());
+        let length = s.len();
+        let (offset, _) = self.module.add_data(bytemuck::cast_slice(s).to_vec());
         (offset as i32, length as i32)
     }
 
