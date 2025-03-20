@@ -3282,7 +3282,11 @@ pub fn generate_data_string(pairs: &[(usize, Vec<u8>)]) -> Vec<u8> {
             ((offset >> 24) & 0xff) as u8, // Most significant byte last
         ]);
 
-        let len = str.len() as i32;
+        // length needs to be divided by 2 cause we're dealing with UTF-16 strings
+        if str.len() % 2 == 1 {
+            panic!("A data string has length not dividable by 2, it's not an UTF-16 string");
+        }
+        let len = (str.len() as i32) / 2;
         result.append(&mut vec![
             (len & 0xff) as u8, // Least significant byte first
             ((len >> 8) & 0xff) as u8,
