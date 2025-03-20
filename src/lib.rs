@@ -469,6 +469,8 @@ impl WasmTranslator {
             Pattern::Array(array_pattern) => {
                 for (i, element) in array_pattern.bindings().iter().enumerate() {
                     match element {
+                        // TODO: ellision is empty, I don't remember if this is correct or should
+                        // it be implemented?
                         boa_ast::pattern::ArrayPatternElement::Elision => {}
                         boa_ast::pattern::ArrayPatternElement::SingleName {
                             ident,

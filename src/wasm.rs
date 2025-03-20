@@ -3,6 +3,15 @@ use tarnik_ast::WatModule;
 
 pub fn generate_module() -> WatModule {
     wasm! {
+        // Not sure where to put this info, but here is the mapping of WASM values
+        // to JS values:
+        //
+        // null - undefined
+        // 0i31 - false
+        // 1i31 - true
+        // 2i31 - null
+        // 3i31 - empty array element
+        // 4i31 - NaN
         #[import("wasi_snapshot_preview1", "fd_write")]
         fn write(fd: i32, iov_start: i32, iov_len: i32, nwritten: i32) -> i32;
 
@@ -445,10 +454,11 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, Array_constructor, null));
 
             let length_getter: Function = new_function(global_scope as Scope, Array_length, null);
+            let length_setter: Function = new_function(global_scope as Scope, Array_set_length, null);
             set_property(object, data!("length"),
                 Property {
-                    value: AccessorMethod { get: length_getter, set: null },
-                    flags: PROPERTY_IS_GETTER // TODO: Check if we need any other flags here
+                    value: AccessorMethod { get: length_getter, set: length_setter },
+                    flags: PROPERTY_IS_GETTER | PROPERTY_IS_SETTER
                 });
 
             object.own_prototype = global_object_prototype as Object;
@@ -673,8 +683,357 @@ pub fn generate_module() -> WatModule {
             return new_number(array.length as f64);
         }
 
+        fn Array_set_length(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let length_number: anyref = ToNumber(first_argument_or_null(arguments));
+
+            return null;
+
+            // return new_number(array.length as f64);
+        }
+
+        fn ToNumber(target: anyref) -> anyref {
+            let result_i31ref: i31ref;
+            let str: String;
+            if ref_test!(target, null) {
+                result_i31ref = 4 as i31ref;
+                return result_i31ref;
+            }
+
+            if is_null(target) || is_false(target) {
+                return new_number(0);
+            }
+
+            if is_true(target) {
+                return new_number(1);
+            }
+
+            if ref_test!(target, Symbol) {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert a Symbol value to a number"));
+                throw!(JSException, error);
+            }
+
+            if ref_test!(target, StaticString) {
+                str = convert_static_string_to_string(target as StaticString);
+                return StringToNumber(str);
+            }
+
+            if ref_test!(target, String) {
+                return StringToNumber(target as String);
+            }
+            return null;
+        }
+
+        fn string_slice_start(target: String, index_start: i32) -> String {
+            let len: i32 = target.length;
+            if index_start < 0 {
+                index_start = len + index_start;
+                if index_start < 0 {
+                    index_start = 0;
+                }
+            } else if index_start >= len {
+                return create_empty_string();
+            }
+
+            return copy_string(target, index_start, len);
+        }
+
+        fn copy_string(target: String, index_start: i32, index_end: i32) -> String {
+            let new_string_data: CharArray = [0; index_end - index_start];
+            let i: i32 = index_start;
+            let length: i32 = target.length;
+            let target_data: CharArray = target.data;
+
+            if index_end < 0 {
+                index_end = length - 1;
+            }
+
+            while i <= index_end {
+                new_string_data[i - index_start] = target_data[i];
+                i += 1;
+            }
+
+            return String {
+                data: new_string_data,
+                length: index_end - index_start
+            };
+        }
+
+        fn StringToNumber(target: String) -> anyref {
+            // Variable declarations
+            let mut sign: f64 = 1.0;
+            let mut start: i32 = 0;
+            let mut value: f64 = 0.0;
+            let mut fractional_multiplier: f64 = 0.0;
+            let mut exponent_value: i32 = 0;
+            let mut exponent_sign: i32 = 1;
+            let mut decimal_point_found: i32 = 0;
+            let mut valid_chars: i32 = 1;
+            let mut base: i32 = 10;
+            let mut offset: i32 = 0;
+            let mut i: i32 = 0;
+            let mut c: i32 = ' ';
+            let mut digit: f64 = 0.0;
+            let mut total_exp: i32 = 0;
+            let mut remaining: i32 = 0;
+            let mut prev: f64 = 0.0;
+            let trimmed: String;
+            let data: CharArray;
+            let len: i32 = 0;
+            let i31_result: i31ref;
+
+            // Implementation
+            trimmed = string_trim(target);
+            data = trimmed.data;
+            len = trimmed.length;
+
+            if len == 0 {
+                return new_number(0);
+            }
+
+            if data[0] == '-' {
+                sign = -1.0 as f64;
+                start = 1;
+            } else if data[0] == '+' {
+                start = 1;
+            }
+
+            if compare_string_range_and_static_string(trimmed, start, len-1, new_static_string(data!("Infinity"), 16)) {
+                return new_number(sign * f64::INFINITY);
+            }
+
+            base = 10;
+            offset = start;
+            if start < len - 1 && data[start] == '0' {
+                if data[start+1] == 'x' || data[start+1] == 'X' {
+                    base = 16;
+                    offset = start + 2;
+                } else if data[start+1] == 'o' || data[start+1] == 'O' {
+                    base = 8;
+                    offset = start + 2;
+                } else if data[start+1] == 'b' || data[start+1] == 'B' {
+                    base = 2;
+                    offset = start + 2;
+                }
+            }
+
+            if base != 10 {
+                return parse_non_decimal(data, offset, len-1, base, sign);
+            }
+
+            i = start;
+            while i < len && valid_chars {
+                c = data[i];
+
+                if c >= '0' && c <= '9' {
+                    digit = (c - '0') as f64;
+
+                    if decimal_point_found {
+                        if fractional_multiplier == 0.0 {
+                            fractional_multiplier = 0.1;
+                        } else {
+                            fractional_multiplier = fractional_multiplier * 0.1;
+                        }
+                        value = value + digit * fractional_multiplier;
+                    } else {
+                        value = value * 10.0 + digit;
+                    }
+                } else if c == '.' {
+                    if decimal_point_found {
+                        valid_chars = 0;
+                    }
+                    decimal_point_found = 1;
+                } else if c == 'e' || c == 'E' {
+                    i = i + 1;
+                    if i >= len {
+                        valid_chars = 0;
+                        break;
+                    }
+
+                    if data[i] == '+' {
+                        i = i + 1;
+                    } else if data[i] == '-' {
+                        exponent_sign = -1;
+                        i = i + 1;
+                    }
+
+                    while i < len {
+                        c = data[i];
+                        if c >= '0' && c <= '9' {
+                            exponent_value = exponent_value * 10 + (c - '0');
+                        } else {
+                            valid_chars = 0;
+                            break;
+                        }
+                        i = i + 1;
+                    }
+                    break;
+                } else {
+                    valid_chars = 0;
+                }
+
+                i = i + 1;
+            }
+
+            if !valid_chars {
+                i31_result = 4 as i31ref;
+                return i31_result;
+            }
+
+            total_exp = exponent_sign * exponent_value;
+            if total_exp > 0 {
+                remaining = total_exp;
+                while remaining > 0 {
+                    if value == f64::INFINITY || value == f64::NEG_INFINITY {
+                        break;
+                    }
+
+                    value = value * 10.0;
+                    remaining = remaining - 1;
+                }
+            } else if total_exp < 0 {
+                remaining = -total_exp;
+                while remaining > 0 {
+                    prev = value;
+                    value = value / 10.0;
+                    if value == prev {
+                        value = 0.0;
+                        break;
+                    }
+                    remaining = remaining - 1;
+                }
+            }
+
+            value = value * sign;
+            if value == 0.0 && sign < 0.0 {
+                value = -0.0 as f64;
+            }
+
+            return new_number(value);
+        }
+
+        fn parse_non_decimal(data: CharArray, start: i32, end: i32, base: i32, sign: f64) -> anyref {
+            // Variable declarations
+            let mut value: f64 = 0.0;
+            let mut i: i32 = start;
+            let mut c: i32 = ' ';
+            let mut digit: f64 = 0.0;
+            let mut numeric_value: i32 = 0;
+            let i31_result: i31ref;
+
+            // Implementation
+            while i <= end {
+                c = data[i];
+                numeric_value = c;
+                digit = 0.0;
+
+                if c >= '0' && c <= '9' {
+                    digit = (numeric_value - '0') as f64;
+                } else if c >= 'a' && c <= 'f' {
+                    digit = (numeric_value - 'a' + 10) as f64;
+                } else if c >= 'A' && c <= 'F' {
+                    digit = (numeric_value - 'A' + 10) as f64;
+                } else if c == '_' {
+                    i = i + 1;
+                    continue;
+                } else {
+                    i31_result = 4 as i31ref;
+                    return i31_result;
+                }
+
+                if digit >= base as f64 {
+                    i31_result = 4 as i31ref;
+                    return i31_result;
+                }
+
+                value = value * base as f64 + digit;
+                if value == f64::INFINITY {
+                    break;
+                }
+                i = i + 1;
+            }
+
+            return new_number(sign * value);
+        }
+        // fn string_strip_prefix(prefix: String, target: String) -> String {
+        //     let mut i: i32 = 0;
+        //     let mut j: i32 = 0;
+        //     let prefix_len: i32 = prefix.length;
+        //     let target_len: i32 = target.length;
+        //     let new_string_data: CharArray;
+        //
+        //     while i < prefix_len && i < target.length {
+        //         if prefix.data[i] != target.data[i] {
+        //             return target;
+        //         }
+        //         i += 1;
+        //     }
+        //
+        //     if i == prefix_len {
+        //         // we got to the end of the prefix, thus we can strip it
+        //         if prefix_len == target_len {
+        //             // prefix was the entire string, return an empty string
+        //             return String {
+        //                 data: [null; 0],
+        //                 len: 0
+        //             };
+        //         }
+        //
+        //         new_string_data = [null; target_len - prefix_len];
+        //         while j < target_len {
+        //             new_string_data[j] = target.data[j + i];
+        //             j += 1;
+        //         }
+        //
+        //         return String {
+        //             data: new_string_data,
+        //             len: target_len - prefix_len
+        //         };
+        //     }
+        //
+        //     return target;
+        // }
+
+        fn string_trim(str: String) -> String {
+            let mut i: i32 = 0;
+            let old_data: CharArray = str.data;
+            let l: i32 = len!(old_data);
+            let mut j: i32 = l - 1;
+            let new_data: CharArray;
+            let mut offset: i32 = 0;
+
+            while i < l && (old_data[i] == 32 || (old_data[i] >= 9 && old_data[i] <= 13)) {
+                i += 1;
+            }
+
+            if i == l {
+                return create_empty_string();
+            }
+
+            while j >= 0 && (old_data[i] == 32 || (old_data[i] >= 9 && old_data[i] <= 13)) {
+                j -= 1;
+            }
+
+            new_data = [0; j - i + 1];
+            offset = i;
+
+            while i <= j {
+                new_data[i - offset] = old_data[i];
+                i += 1;
+            }
+
+            return String {
+                data: new_data,
+                length: len!(new_data)
+            };
+        }
+
         fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
             return create_array(0);
+        }
+
+        fn Number_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            let arg: anyref = first_argument_or_null(arguments);
+            return ToNumber(arg);
         }
 
         fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -2272,6 +2631,10 @@ pub fn generate_module() -> WatModule {
                         return create_string_from_array("true");
                     } else if v == 2 {
                         return create_string_from_array("null");
+                    } else if v == 3 {
+                        return create_string_from_array("empty");
+                    } else if v == 4 {
+                        return create_string_from_array("NaN");
                     }
                 }
             } else {
@@ -3457,21 +3820,7 @@ pub fn generate_module() -> WatModule {
                 str1 = arg1 as String;
                 static_str2 = arg2 as StaticString;
 
-                if str1.length != static_str2.length {
-                    return 0 as i31ref;
-                }
-                len = str1.length;
-                offset = static_str2.offset;
-                char_array1 = str1.data;
-                while i < len {
-                    if char_array1[i] != memory::<i8>[offset + i] {
-                        return 0 as i31ref;
-                    }
-                    i += 1;
-                }
-
-                return 1 as i31ref;
-
+                return compare_string_and_static_string(str1, static_str2) as i31ref;
             }
 
             if ref_test!(arg1, StaticString) && ref_test!(arg2, String) {
@@ -3502,8 +3851,77 @@ pub fn generate_module() -> WatModule {
             return 0 as i31ref;
         }
 
+        fn compare_string_range_and_static_string(str: String, start: i32, end: i32, static_str: StaticString) -> i32 {
+            let char_array: CharArray;
+            let len: i32;
+            let static_str_len: i32 = static_str.length;
+            let offset: i32;
+            let mut i: i32;
+            len = end - start;
+
+            if len != static_str.length {
+                return 0;
+            }
+            offset = static_str.offset;
+            char_array = str.data;
+            while i <= end {
+                if char_array[i] != memory::<u16>[offset + (i * 2)] {
+                    return 0;
+                }
+                i += 1;
+            }
+
+            return 1;
+        }
+
+        fn compare_string_and_static_string(str: String, static_str: StaticString) -> i32 {
+            let char_array: CharArray;
+            let len: i32;
+            let offset: i32;
+            let mut i: i32;
+
+            if str.length != static_str.length {
+                return 0;
+            }
+            len = str.length;
+            offset = static_str.offset;
+            char_array = str.data;
+            while i < len {
+                if char_array[i] != memory::<u16>[offset + (i * 2)] {
+                    return 0;
+                }
+                i += 1;
+            }
+
+            return 1;
+        }
+
         fn is_a_string(arg: anyref) -> i32 {
             return ref_test!(arg, String) || ref_test!(arg, StaticString);
+        }
+
+        fn is_null(arg: anyref) -> i32 {
+            if ref_test!(arg, i31ref) {
+                return (arg as i31ref == 2);
+            }
+
+            return 0;
+        }
+
+        fn is_true(arg: anyref) -> i32 {
+            if ref_test!(arg, i31ref) {
+                return (arg as i31ref == 1);
+            }
+
+            return 0;
+        }
+
+        fn is_false(arg: anyref) -> i32 {
+            if ref_test!(arg, i31ref) {
+                return (arg as i31ref == 0);
+            }
+
+            return 0;
         }
 
         fn is_null_or_undefined(arg: anyref) -> i32 {
@@ -3823,6 +4241,30 @@ pub fn generate_module() -> WatModule {
         fn writeF64AsAscii(value: f64, offset: i32) -> i32 {
             let mut current_offset: i32 = offset;
             let mut remaining_value: f64 = value;
+            let divisor: f64 = 10.0;
+
+            if value == f64::INFINITY {
+                memory[offset] = 'I';
+                memory[offset + 1] = 'n';
+                memory[offset + 2] = 'f';
+                memory[offset + 3] = 'i';
+                memory[offset + 4] = 'n';
+                memory[offset + 5] = 'i';
+                memory[offset + 6] = 't';
+                memory[offset + 7] = 'y';
+                return 8;
+            } else if value == f64::NEG_INFINITY {
+                memory[offset] = '-';
+                memory[offset + 1] = 'I';
+                memory[offset + 2] = 'n';
+                memory[offset + 3] = 'f';
+                memory[offset + 4] = 'i';
+                memory[offset + 5] = 'n';
+                memory[offset + 6] = 'i';
+                memory[offset + 7] = 't';
+                memory[offset + 8] = 'y';
+                return 9;
+            }
 
             // Handle negative numbers
             if value < 0.0 {
@@ -3837,23 +4279,34 @@ pub fn generate_module() -> WatModule {
                 return current_offset - offset + 1;
             }
 
+            let mut exponent: i32 = 0;
+
+            if remaining_value >= 1e21 || remaining_value < 1e-6 {
+                return write_in_exponential_notation(remaining_value, current_offset);
+            }
+
             // Split into integer and fractional parts
-            let int_part: f64 = remaining_value as i64 as f64;
+            let int_part: f64 = trunc!(remaining_value);
             let frac_part: f64 = remaining_value - int_part;
 
             // Convert integer part
             let mut int_digits: CharArray = [0; 20];  // Max digits for f64
             let mut int_count: i32 = 0;
             let mut int_val: f64 = int_part;
+            let mut divided: f64;
+            let mut truncated: f64;
+            let mut digit_value: i32;
+            let mut truncated_times_divisor: f64;
 
             let digit: i32;
             while int_val >= 1.0 {
-                digit = (int_val as i64 % 10) as i32;
-                int_digits[int_count] = '0' as i32 + digit;
+                divided = int_val / divisor;
+                truncated = trunc!(divided); // Floor the division
+                truncated_times_divisor = truncated * divisor;
+                digit_value = (trunc!(int_val) - trunc!(truncated_times_divisor)) as i32; // Last digit
+                int_digits[int_count] = '0' + digit_value;
                 int_count += 1;
-                int_val = int_val / 10.0;
-                // floor
-                int_val = int_val as i64 as f64;
+                int_val = truncated; // Remove the last digit
             }
 
             // Write integer part in correct order
@@ -3889,6 +4342,29 @@ pub fn generate_module() -> WatModule {
             }
 
             return current_offset - offset;
+        }
+
+        fn write_in_exponential_notation(value: f64, offset: i32) -> i32 {
+            let mut exponent: i32 = 0;
+
+            // Normalize value to 1.0 <= value < 10.0
+            while value >= 10.0 {
+                value = value / 10.0;
+                exponent += 1;
+            }
+            while value < 1.0 && value != 0.0 {
+                value = value * 10.0;
+                exponent -= 1;
+            }
+
+            let mut chars_written: i32 = writeF64AsAscii(value, offset);
+
+            // Write 'e' and exponent
+            memory::<i8>[offset + chars_written] = 'e';
+            chars_written += 1;
+
+            chars_written += writeF64AsAscii(exponent as f64, offset + chars_written);
+            return chars_written;
         }
 
         fn log_string(str: StaticString) {
@@ -4372,6 +4848,7 @@ pub fn generate_module() -> WatModule {
             let object_constructor: Function = new_function(global_scope as Scope, Object_constructor, null);
             let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
             let symbol_constructor: Function = new_function(global_scope as Scope, Symbol_constructor, null);
+            let number_constructor: Function = new_function(global_scope as Scope, Number_constructor, null);
             let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
             let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
             let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
@@ -4410,6 +4887,7 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Error"), error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Array"), array_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("Number"), number_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Symbol"), symbol_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("ReferenceError"), reference_error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("TypeError"), type_error_constructor, VARIABLE_CONST);
