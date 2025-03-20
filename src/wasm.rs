@@ -34,6 +34,9 @@ pub fn generate_module() -> WatModule {
         tag!(InternalException, InternalExceptionType);
         tag!(JSException, JSExceptionType);
 
+        static TO_PRIMITIVE_NUMBER: i32 = 1;
+        static TO_PRIMITIVE_STRING: i32 = 2;
+
         static PROPERTY_WRITABLE: i32     = 0b00000001;
         static PROPERTY_ENUMERABLE: i32   = 0b00000010;
         static PROPERTY_CONFIGURABLE: i32 = 0b00000100;
@@ -270,6 +273,7 @@ pub fn generate_module() -> WatModule {
         };
         static symbol_iterator: Symbol = Symbol {};
         static symbol_async_iterator: Symbol = Symbol {};
+        static symbol_to_primitive: Symbol = Symbol {};
         static mut thenables: Thenables = [null; 5];
 
         // Memory management functions required by the Component Model
@@ -494,7 +498,276 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_static_string(data!("<TODO: array>"), 30);
+            if ref_test!(this, Array) {
+                let array: Array = this as Array;
+                let length: i32 = array.length;
+                let elements: AnyrefArray = array.array;
+                let strings: StringArray = [null; array.length];
+                let new_data: CharArray;
+                let mut i: i32 = 0;
+                let mut j: i32 = 0;
+                let mut k: i32 = 0;
+                let mut str: anyref;
+                let mut element: anyref;
+                let mut result_length: i32 = 0;
+                let mut str: String;
+                let mut str_length: i32;
+                let mut str_data: CharArray;
+
+                // TODO: this should delegate to join() in the future
+                while i < length {
+                    element = elements[i];
+                    str = ToString(element);
+                    strings[i] = str;
+                    result_length += str.length;
+                    i += 1;
+                }
+
+                // commas
+                result_length += length - 1;
+                new_data = [0; result_length];
+
+                i = 0;
+                // i - strings index
+                // j - str_data index
+                // k - result string index
+                while i < length {
+                    j = 0;
+                    str = strings[i] as String;
+                    str_length = str.length;
+                    str_data = str.data;
+                    while j < str_length {
+                        new_data[k] = str_data[j];
+                        j += 1;
+                        k += 1;
+                    }
+
+                    if i != length - 1 {
+                        str_data[k] = ',';
+                        k += 1;
+                    }
+
+                    i += 1;
+                }
+
+                return String {
+                    data: new_data,
+                    length: result_length,
+                };
+            } else {
+                return new_static_string(data!("TODO: how does Array.prototype.toString works on non-arrays"), 118);
+            }
+
+            return null;
+        }
+
+        fn ToString(target: anyref) -> String {
+            if ref_test!(target, String) {
+                return target as String;
+            } else if ref_test!(target, StaticString) {
+                return convert_static_string_to_string(target as StaticString);
+            } else if ref_test!(target, null) {
+                return create_string_from_array("undefined");
+            } else if is_primitive(target) {
+                if ref_test!(target, Number) {
+                    return NumberToString(target as Number, 10);
+                } else if ref_test!(target, i31ref) {
+                    let v: i32 = target as i31ref as i32;
+
+                    if v == 0 {
+                        return create_string_from_array("false");
+                    } else if v == 1 {
+                        return create_string_from_array("true");
+                    } else if v == 2 {
+                        return create_string_from_array("null");
+                    } else if v == 3 {
+                        return create_string_from_array("empty");
+                    } else if v == 4 {
+                        return create_string_from_array("NaN");
+                    }
+                }
+            } else {
+                let result: anyref = ToPrimitive(target, TO_PRIMITIVE_STRING);
+
+                if !is_object(result) {
+                    return ToString(result);
+                }
+
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+                throw!(JSException, error);
+            }
+
+            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+            throw!(JSException, error);
+        }
+
+        fn NumberToString(number: Number, radix: i32) -> String {
+            let written_length: i32 = number_to_string_memory(number.value, radix, free_memory_offset);
+            return memory_to_string(free_memory_offset, written_length);
+        }
+
+        fn number_to_string_memory(value: f64, radix: i32, offset: i32) -> i32 {
+            let mut current_offset: i32 = offset;
+
+            // Handle NaN
+            if value != value {
+                memory::<i8>[current_offset] = 'N';
+                memory::<i8>[current_offset + 1] = 'a';
+                memory::<i8>[current_offset + 2] = 'N';
+                return 3;
+            }
+
+            // Handle Infinity
+            if value == f64::INFINITY {
+                memory::<i8>[current_offset] = 'I';
+                memory::<i8>[current_offset + 1] = 'n';
+                memory::<i8>[current_offset + 2] = 'f';
+                memory::<i8>[current_offset + 3] = 'i';
+                memory::<i8>[current_offset + 4] = 'n';
+                memory::<i8>[current_offset + 5] = 'i';
+                memory::<i8>[current_offset + 6] = 't';
+                memory::<i8>[current_offset + 7] = 'y';
+                return 8;
+            } else if value == f64::NEG_INFINITY {
+                memory::<i8>[current_offset] = '-';
+                current_offset += 1;
+                memory::<i8>[current_offset] = 'I';
+                memory::<i8>[current_offset + 1] = 'n';
+                memory::<i8>[current_offset + 2] = 'f';
+                memory::<i8>[current_offset + 3] = 'i';
+                memory::<i8>[current_offset + 4] = 'n';
+                memory::<i8>[current_offset + 5] = 'i';
+                memory::<i8>[current_offset + 6] = 't';
+                memory::<i8>[current_offset + 7] = 'y';
+                return 9;
+            }
+
+            // Handle zero (both positive and negative)
+            if value == 0.0 || value == -0.0 {
+                memory::<i8>[current_offset] = '0';
+                return 1;
+            }
+
+            // Validate radix
+            if radix < 2 || radix > 36 {
+                // TODO: throw RangeError
+                return 0;
+            }
+
+            // Use specal function for 10 base, that support scientific notation
+            if radix == 10 {
+                return writeF64AsAscii(value, offset);
+            }
+
+            // Determine sign and absolute value
+            let is_negative: i32;
+            if value < 0.0 {
+                is_negative = 1;
+            } else {
+                is_negative = 0;
+            }
+            let mut abs_value: f64;
+            if is_negative != 0 {
+                abs_value = -value;
+            } else {
+                abs_value = value;
+            }
+
+            // Split into integer and fractional parts
+            let integer_part: f64 = trunc!(abs_value);
+            let fractional_part: f64 = abs_value - integer_part;
+            let mut digit: i32;
+            let mut divisor: f64;
+            let mut divided: f64;
+            let mut truncated: f64;
+            let mut remainder: f64;
+
+            // Convert integer part to digits in reverse order
+            let mut int_digits: CharArray = [0; 64];
+            let mut int_count: i32 = 0;
+            let mut int_val: f64 = integer_part;
+
+            if int_val == 0.0 {
+                int_digits[0] = 0;
+                int_count = 1;
+            } else {
+                while int_val > 0.0 && int_count < 64 {
+                    divisor = radix as f64;
+                    divided = int_val / divisor;
+                    truncated = trunc!(divided);
+                    remainder = int_val - truncated * divisor;
+                    digit = remainder as i32;
+                    int_digits[int_count] = digit;
+                    int_count += 1;
+                    int_val = truncated;
+                }
+            }
+
+            // Convert fractional part to digits
+            let mut frac_digits: CharArray = [0; 20];
+            let mut frac_count: i32 = 0;
+            let mut frac_val: f64 = fractional_part;
+
+            while frac_val > 0.0 && frac_count < 20 {
+                frac_val = frac_val * radix as f64;
+                digit = trunc!(frac_val) as i32;
+                frac_digits[frac_count] = digit;
+                frac_count += 1;
+                frac_val -= digit as f64;
+            }
+
+            // Write sign if negative
+            if is_negative != 0 {
+                memory::<i8>[current_offset] = '-';
+                current_offset += 1;
+            }
+
+            let mut c: i32;
+
+            // Write integer part in reverse order
+            let mut i: i32 = int_count - 1;
+            while i >= 0 {
+                digit = int_digits[i];
+                if digit < 10 {
+                    c = '0' + digit;
+                } else {
+                    c = 'a' + (digit - 10);
+                }
+                memory::<i8>[current_offset] = c;
+                current_offset += 1;
+                i -= 1;
+            }
+
+            // Write fractional part if any
+            if frac_count > 0 {
+                memory::<i8>[current_offset] = '.';
+                current_offset += 1;
+
+                i = 0;
+                while i < frac_count {
+                    digit = frac_digits[i];
+                    if digit < 10 {
+                        c = '0'+ digit;
+                    } else {
+                        c = 'a' + (digit - 10);
+                    }
+                    memory::<i8>[current_offset] = c;
+                    current_offset += 1;
+                    i += 1;
+                }
+
+                // Trim trailing zeros
+                while current_offset > offset && memory::<i8>[current_offset - 1] == '0' {
+                    current_offset -= 1;
+                }
+
+                // Remove decimal point if no fractional digits left
+                if current_offset > offset && memory::<i8>[current_offset - 1] == '.' {
+                    current_offset -= 1;
+                }
+            }
+
+            return current_offset - offset;
         }
 
         fn Object_create_simple(value: anyref) -> anyref {
@@ -699,6 +972,10 @@ pub fn generate_module() -> WatModule {
                 return result_i31ref;
             }
 
+            if ref_test!(target, Number) {
+                return target;
+            }
+
             if is_null(target) || is_false(target) {
                 return new_number(0);
             }
@@ -720,7 +997,107 @@ pub fn generate_module() -> WatModule {
             if ref_test!(target, String) {
                 return StringToNumber(target as String);
             }
+
+            return ToNumber(ToPrimitive(target, TO_PRIMITIVE_NUMBER));
+        }
+
+        fn ToPrimitive(target: anyref, desired_type: i32) -> anyref {
+            let to_primitive_maybe: anyref = get_property_value_sym(target, symbol_to_primitive);
+            let hint: StaticString = new_static_string(0, 0);
+            let result: anyref;
+
+            if !ref_test!(to_primitive_maybe, null) {
+                if ref_test!(to_primitive_maybe, Function) {
+                    if desired_type == TO_PRIMITIVE_NUMBER {
+                        hint = new_static_string(data!("number"), 12);
+                    } else if desired_type == TO_PRIMITIVE_STRING {
+                        hint = new_static_string(data!("string"), 12);
+                    } else {
+                        hint = new_static_string(data!("default"), 14);
+                    }
+
+                    result = call_function(to_primitive_maybe as Function, target, create_arguments_1(hint));
+
+                    if is_primitive(result) {
+                        return result;
+                    } else {
+                        let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+                        throw!(JSException, error);
+                    }
+                } else {
+                    let error: anyref = create_error(data!("TypeError"), create_string_from_array("Symbol.toPrimitive value has to be a function"));
+                    throw!(JSException, error);
+                }
+            } else {
+                if desired_type == 0 {
+                    desired_type = TO_PRIMITIVE_NUMBER;
+                }
+
+                return OrdinaryToPrimtive(target, desired_type);
+            }
+
             return null;
+        }
+
+        fn OrdinaryToPrimtive(target: anyref, desired_type: i32) -> anyref {
+            let result: anyref;
+            if desired_type == TO_PRIMITIVE_STRING {
+                result = try_method(target, data!("toString"));
+                if !is_i31ref_value(result, -1) && !is_object(result) {
+                    return result;
+                }
+
+                result = try_method(target, data!("valueOf"));
+                if !is_i31ref_value(result, -1) && !is_object(result) {
+                    return result;
+                }
+
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+                throw!(JSException, error);
+            } else {
+                result = try_method(target, data!("valueOf"));
+                if !is_i31ref_value(result, -1) && !is_object(result) {
+                    return result;
+                }
+
+                result = try_method(target, data!("toString"));
+                if !is_i31ref_value(result, -1) && !is_object(result) {
+                    return result;
+                }
+
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+                throw!(JSException, error);
+            }
+
+            return null;
+        }
+
+        // Will try to call a method with a given offset. Returns either
+        // a result when it was able to call the function or i31ref -1
+        // if it was not callable
+        fn try_method(target: anyref, offset: i32) -> anyref {
+            let maybe_func: anyref;
+            let i31_result: i31ref = -1 as i31ref;
+
+            maybe_func = get_property_value(target, offset);
+            if ref_test!(maybe_func, Function) {
+                return call_function(maybe_func as Function, target, create_arguments_0());
+            }
+
+            return i31_result;
+        }
+
+        fn is_i31ref_value(value: anyref, expected: i32) -> i32 {
+            // TODO: it looks like ref_test!(..., i31ref) will check for a "null i31ref". it would
+            // be nice if that can be fixed, otherwise we have to check for null explicitly
+            if !ref_test!(value, null) && ref_test!(value, i31ref) {
+                let i32_value: i32 = value as i31ref as i32;
+                if i32_value == expected {
+                    return 1;
+                }
+            }
+
+            return 0;
         }
 
         fn string_slice_start(target: String, index_start: i32) -> String {
@@ -1172,10 +1549,14 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Number_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            // TODO: we first write to memory and then extract to an array. it will be better
-            // to build two versions of methods that convert stuff - one that writes to memory and
-            // one that writes to an array
-            return number_to_string_raw(this as Number);
+            let mut radix: i32 = 10;
+            let radix_maybe: anyref = first_argument_or_null(arguments);
+            if !ref_test!(radix_maybe, null) {
+                // TODO: handle NaN and other cases
+                let radix_num: Number = ToNumber(radix_maybe) as Number;
+                radix = radix_num.value as i32;
+            }
+            return NumberToString(this as Number, 10);
         }
 
         fn number_to_string_raw(number: Number) -> String {
@@ -4870,6 +5251,7 @@ pub fn generate_module() -> WatModule {
             set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
             set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));
             set_property(symbol_constructor, data!("asyncIterator"), create_bare_property(symbol_async_iterator));
+            set_property(symbol_constructor, data!("toPrimitive"), create_bare_property(symbol_to_primitive));
 
             let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype)) as Object;
             set_property_value(error_prototype, data!("constructor"), error_constructor);
