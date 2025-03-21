@@ -494,7 +494,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_static_string(data!("[object Object]"), 30);
+            return new_static_string(data!("[object Object]"), 15);
         }
 
         fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -555,7 +555,7 @@ pub fn generate_module() -> WatModule {
                     length: result_length,
                 };
             } else {
-                return new_static_string(data!("TODO: how does Array.prototype.toString works on non-arrays"), 118);
+                return new_static_string(data!("TODO: how does Array.prototype.toString works on non-arrays"), 59);
             }
 
             return null;
@@ -1009,11 +1009,11 @@ pub fn generate_module() -> WatModule {
             if !ref_test!(to_primitive_maybe, null) {
                 if ref_test!(to_primitive_maybe, Function) {
                     if desired_type == TO_PRIMITIVE_NUMBER {
-                        hint = new_static_string(data!("number"), 12);
+                        hint = new_static_string(data!("number"), 6);
                     } else if desired_type == TO_PRIMITIVE_STRING {
-                        hint = new_static_string(data!("string"), 12);
+                        hint = new_static_string(data!("string"), 6);
                     } else {
-                        hint = new_static_string(data!("default"), 14);
+                        hint = new_static_string(data!("default"), 6);
                     }
 
                     result = call_function(to_primitive_maybe as Function, target, create_arguments_1(hint));
@@ -1174,7 +1174,7 @@ pub fn generate_module() -> WatModule {
                 start = 1;
             }
 
-            if compare_string_range_and_static_string(trimmed, start, len-1, new_static_string(data!("Infinity"), 16)) {
+            if compare_string_range_and_static_string(trimmed, start, len-1, new_static_string(data!("Infinity"), 8)) {
                 return new_number(sign * f64::INFINITY);
             }
 
@@ -1440,7 +1440,7 @@ pub fn generate_module() -> WatModule {
             }
             // let new_instance: Object = create_object();
             set_property_value(this, data!("message"), message);
-            set_property_value(this, data!("name"), new_static_string(data!("Error"), 10));
+            set_property_value(this, data!("name"), new_static_string(data!("Error"), 5));
 
             return this;
         }
@@ -1450,7 +1450,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("ReferenceError"), 28));
+            set_property_value(this, data!("name"), new_static_string(data!("ReferenceError"), 14));
 
             return this;
         }
@@ -1460,7 +1460,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 18));
+            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 14));
 
             return this;
         }
@@ -1470,7 +1470,7 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 22));
+            set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 11));
 
             return this;
         }
@@ -1536,7 +1536,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
-            return new_static_string(data!("function () { [native code] }"), 58);
+            return new_static_string(data!("function () { [native code] }"), 29);
         }
 
         fn create_number_prototype() -> Object {
@@ -1570,7 +1570,7 @@ pub fn generate_module() -> WatModule {
             // TODO: technically we could read bigger values and split them into i8s
             let mut i: i32 = 0;
             while i < length {
-                string_data[i] = memory::<u16>[offset + (i * 2)];
+                string_data[i] = memory::<i8>[offset + i];
                 i += 1;
             }
 
@@ -1578,8 +1578,6 @@ pub fn generate_module() -> WatModule {
                 data: string_data,
                 length: length,
             };
-
-
         }
 
         fn add_to_promise_chain(target_promise: Promise, promise: Promise) {
@@ -2149,7 +2147,7 @@ pub fn generate_module() -> WatModule {
             // Copy second part
             i = 0;
             while i < len2 {
-                string_data::<u16>[len1 + (i * 2)] = memory::<u16>[ptr2 + (i * 2)];
+                string_data::<u16>[len1 + i] = memory::<u16>[ptr2 + (i * 2)];
                 i += 1;
             }
 
@@ -2615,7 +2613,7 @@ pub fn generate_module() -> WatModule {
         fn create_reference_error(name: i32) -> anyref {
             let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
             let object: Object = create_object();
-            let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 48));
+            let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 24));
             call_function(constructor, object, arguments);
 
             return return_new_instance_result(object, null, get_property(constructor, data!("prototype")), constructor);
@@ -2990,58 +2988,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn to_string(value: anyref) -> String {
-            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
-            if ref_test!(value, null) {
-                // TODO: it would be better to return a static string here, but at the moment
-                //       I don't really have a good way to return "some string". maybe I'll just
-                //       return anyref from this function?
-                return create_string_from_array("undefined");
-            } else if is_primitive(value) {
-                if ref_test!(value, Number) {
-                    return number_to_string_raw(value as Number);
-                } else if ref_test!(value, String) {
-                    return value as String;
-                } else if ref_test!(value, StaticString) {
-                    return convert_static_string_to_string(value as StaticString);
-                } else if ref_test!(value, i31ref) {
-                    let v: i32 = value as i31ref as i32;
-
-                    if v == 0 {
-                        return create_string_from_array("false");
-                    } else if v == 1 {
-                        return create_string_from_array("true");
-                    } else if v == 2 {
-                        return create_string_from_array("null");
-                    } else if v == 3 {
-                        return create_string_from_array("empty");
-                    } else if v == 4 {
-                        return create_string_from_array("NaN");
-                    }
-                }
-            } else {
-                let maybe_to_string: Nullable<Property> =
-                    get_property_str(value, create_string_from_array("toString"));
-
-                if ref_test!(maybe_to_string, null) {
-                    // we can't convert to string
-                    throw!(JSException, error);
-                } else {
-                    let to_string_prop: Property = maybe_to_string as Property;
-                    if ref_test!(to_string_prop.value, Function) {
-                        let result: anyref = call_function(to_string_prop.value as Function, value, create_arguments_0());
-                        if is_primitive(result) {
-                            return to_string(result);
-                        } else {
-                            throw!(JSException, error);
-                        }
-                    } else {
-                        // toString is not a function, error out
-                        throw!(JSException, error);
-                    }
-                }
-            }
-
-            throw!(JSException, create_error(data!("Error"), create_string_from_array("not implemented, converting to string")));
+            return ToString(value);
         }
 
         fn set_property_value_sym(target: anyref, key: Symbol, value: anyref) {
@@ -4473,34 +4420,34 @@ pub fn generate_module() -> WatModule {
 
         fn type_of(arg: anyref) -> StaticString {
             if ref_test!(arg, null) {
-                return new_static_string(data!("undefined"), 18);
+                return new_static_string(data!("undefined"), 9);
             }
 
             if ref_test!(arg, i31ref) {
                 let val: i32 = arg as i31ref as i32;
                 if val == 0 || val == 1 {
-                    return new_static_string(data!("boolean"), 14);
+                    return new_static_string(data!("boolean"), 7);
                 }
-                return new_static_string(data!("undefined"), 18);
+                return new_static_string(data!("undefined"), 9);
             }
 
             if ref_test!(arg, Number) {
-                return new_static_string(data!("number"), 12);
+                return new_static_string(data!("number"), 6);
             }
 
             if ref_test!(arg, Object) || ref_test!(arg, Promise) || ref_test!(arg, Array) || ref_test!(arg, Generator) || ref_test!(arg, AsyncGenerator) {
-                return new_static_string(data!("object"), 12);
+                return new_static_string(data!("object"), 6);
             }
 
             if ref_test!(arg, StaticString) {
-                return new_static_string(data!("string"), 12);
+                return new_static_string(data!("string"), 6);
             }
 
             if ref_test!(arg, Function) {
-                return new_static_string(data!("function"), 16);
+                return new_static_string(data!("function"), 8);
             }
 
-            return new_static_string(data!("undefined"), 18);
+            return new_static_string(data!("undefined"), 9);
         }
 
         fn less_than_or_equal(arg1: anyref, arg2: anyref) -> i31ref {
@@ -4840,11 +4787,11 @@ pub fn generate_module() -> WatModule {
                 // Handle StaticString
                 if ref_test!(current, StaticString) {
                     static_str = current as StaticString;
-                    str_utf8_len = utf16le_to_utf8(static_str.offset, static_str.length, offset);
-                    memory[iovectors_offset] = offset;
+                    str_utf8_len = utf16le_to_utf8(static_str.offset, static_str.length * 2, offset + static_str.length * 2);
+                    memory[iovectors_offset] = offset + static_str.length * 2;
                     memory[iovectors_offset + 4] = str_utf8_len;
                     // we wrote to memory, now we have to advance the offset
-                    offset += str_utf8_len;
+                    offset += static_str.length * 2 + str_utf8_len;
                     iovectors_offset += 8;
                     handled = 1;
                 }
@@ -4858,16 +4805,16 @@ pub fn generate_module() -> WatModule {
                     j = 0;
                     str_data = str.data;
                     while j < str_len {
-                        memory[offset + j] = str_data[j];
+                        memory::<u16>[offset + (j * 2)] = str_data[j];
                         j += 1;
                     }
 
-                    str_utf8_len = utf16le_to_utf8(offset, str_len, offset + str_len);
+                    str_utf8_len = utf16le_to_utf8(offset, str_len * 2, offset + str_len * 2);
 
-                    memory[iovectors_offset] = offset + str_len;
+                    memory[iovectors_offset] = offset + str_len * 2;
                     memory[iovectors_offset + 4] = str_utf8_len;
 
-                    offset += str_len + str_utf8_len;
+                    offset += str_len * 2 + str_utf8_len;
 
                     iovectors_offset += 8;
                     handled = 1;
@@ -5302,13 +5249,13 @@ pub fn generate_module() -> WatModule {
 
                 if !ref_test!(message, null) {
                     let args: JSArgs = create_arguments_2(
-                        new_static_string(data!("error encountered"), 34),
+                        new_static_string(data!("error encountered"), 17),
                         message
                     );
                     log(args);
                 } else {
                     let args: JSArgs = create_arguments_2(
-                        new_static_string(data!("error encountered"), 34),
+                        new_static_string(data!("error encountered"), 17),
                         error
                     );
                     log(args);

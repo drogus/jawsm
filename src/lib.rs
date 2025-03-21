@@ -199,11 +199,15 @@ impl WasmTranslator {
 
     fn add_symbol(&mut self, sym: Sym) -> i32 {
         let value = self.interner.resolve(sym).unwrap().to_string();
-        let utf16_string: WString<LittleEndian> = WString::from(&value);
-        let bytes = utf16_string.into_bytes();
-        let value = bytemuck::cast_slice(&bytes);
+        if value.is_empty() {
+            self.add_new_symbol(sym, &[])
+        } else {
+            let utf16_string: WString<LittleEndian> = WString::from(&value);
+            let bytes = utf16_string.into_bytes();
+            let value = bytemuck::cast_slice(&bytes);
 
-        self.add_new_symbol(sym, &value)
+            self.add_new_symbol(sym, value)
+        }
     }
 
     fn add_identifier(&mut self, identifier: &Identifier) -> i32 {
