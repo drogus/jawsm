@@ -5057,7 +5057,7 @@ pub fn generate_module() -> WatModule {
                     data = [0; current_length];
                     j = 0;
                     while j < current_length {
-                        data[j] = memory::<i8>[current_offset + j];
+                        data[j] = memory::<u16>[current_offset + (j * 2)];
                         j+=1;
                     }
 
