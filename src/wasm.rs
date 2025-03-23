@@ -1036,6 +1036,26 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn ToBoolean(value: anyref) -> anyref {
+            let result: i31ref;
+            let number: f64;
+            if is_true(value) || is_false(value) {
+                return value;
+            } else if ref_test!(value, null) {
+                result = 0 as i31ref;
+                return result;
+            } else if ref_test!(value, Number) {
+                number = (value as Number).value;
+                if number == 0.0 || number != number {
+                    result = 0 as i31ref;
+                    return result;
+                }
+            }
+
+            result = 1 as i31ref;
+            return result;
+        }
+
         fn OrdinaryToPrimtive(target: anyref, desired_type: i32) -> anyref {
             let result: anyref;
             if desired_type == TO_PRIMITIVE_STRING {
@@ -1401,8 +1421,15 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Number_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
             return ToNumber(arg);
+        }
+
+        fn Boolean_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+            // TODO: Handle calling this as a constructor
+            let arg: anyref = first_argument_or_null(arguments);
+            return ToBoolean(arg);
         }
 
         fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
@@ -4229,6 +4256,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_true(arg: anyref) -> i32 {
+            if ref_test!(arg, null) {
+                return 0;
+            }
+
             if ref_test!(arg, i31ref) {
                 return (arg as i31ref == 1);
             }
@@ -4237,6 +4268,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_false(arg: anyref) -> i32 {
+            if ref_test!(arg, null) {
+                return 0;
+            }
+
             if ref_test!(arg, i31ref) {
                 return (arg as i31ref == 0);
             }
@@ -5169,6 +5204,7 @@ pub fn generate_module() -> WatModule {
             let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
             let symbol_constructor: Function = new_function(global_scope as Scope, Symbol_constructor, null);
             let number_constructor: Function = new_function(global_scope as Scope, Number_constructor, null);
+            let boolean_constructor: Function = new_function(global_scope as Scope, Boolean_constructor, null);
             let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
             let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
             let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
@@ -5209,6 +5245,7 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, data!("Error"), error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Array"), array_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Number"), number_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("Boolean"), boolean_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Symbol"), symbol_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("ReferenceError"), reference_error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("TypeError"), type_error_constructor, VARIABLE_CONST);
