@@ -11,7 +11,6 @@ pub fn generate_module() -> WatModule {
         // 1i31 - true
         // 2i31 - null
         // 3i31 - empty array element
-        // 4i31 - NaN
         #[import("wasi_snapshot_preview1", "fd_write")]
         fn write(fd: i32, iov_start: i32, iov_len: i32, nwritten: i32) -> i32;
 
@@ -582,8 +581,6 @@ pub fn generate_module() -> WatModule {
                         return create_string_from_array("null");
                     } else if v == 3 {
                         return create_string_from_array("empty");
-                    } else if v == 4 {
-                        return create_string_from_array("NaN");
                     }
                 }
             } else {
@@ -1156,7 +1153,6 @@ pub fn generate_module() -> WatModule {
             let trimmed: String;
             let data: CharArray;
             let len: i32 = 0;
-            let i31_result: i31ref;
 
             // Implementation
             trimmed = string_trim(target);
@@ -1252,8 +1248,7 @@ pub fn generate_module() -> WatModule {
             }
 
             if !valid_chars {
-                i31_result = 4 as i31ref;
-                return i31_result;
+                return new_number(f64::NAN);
             }
 
             total_exp = exponent_sign * exponent_value;
@@ -1295,7 +1290,6 @@ pub fn generate_module() -> WatModule {
             let mut c: i32 = ' ';
             let mut digit: f64 = 0.0;
             let mut numeric_value: i32 = 0;
-            let i31_result: i31ref;
 
             // Implementation
             while i <= end {
@@ -1313,13 +1307,11 @@ pub fn generate_module() -> WatModule {
                     i = i + 1;
                     continue;
                 } else {
-                    i31_result = 4 as i31ref;
-                    return i31_result;
+                    return new_number(f64::NAN);
                 }
 
                 if digit >= base as f64 {
-                    i31_result = 4 as i31ref;
-                    return i31_result;
+                    return new_number(f64::NAN);
                 }
 
                 value = value * base as f64 + digit;
@@ -4592,6 +4584,11 @@ pub fn generate_module() -> WatModule {
                 memory[offset + 7] = 't';
                 memory[offset + 8] = 'y';
                 return 9;
+            } else if value != value {
+                memory[offset] = 'N';
+                memory[offset + 1] = 'a';
+                memory[offset + 2] = 'N';
+                return 3;
             }
 
             // Handle negative numbers
@@ -4751,11 +4748,6 @@ pub fn generate_module() -> WatModule {
                     } else if val == 3 {
                         memory[iovectors_offset] = data!("empty");
                         memory[iovectors_offset + 4] = 10;
-                        iovectors_offset += 8;
-                        handled = 1;
-                    } else if val == 4 {
-                        memory[iovectors_offset] = data!("NaN");
-                        memory[iovectors_offset + 4] = 6;
                         iovectors_offset += 8;
                         handled = 1;
                     } else {
