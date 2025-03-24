@@ -2459,11 +2459,7 @@ pub fn generate_module() -> WatModule {
                 }
             }
 
-            if ref_test!(arg, StaticString) {
-                return 1;
-            }
-
-            return 0;
+            return 1;
         }
 
         fn new_static_string(offset: i32, length: i32) -> StaticString {
