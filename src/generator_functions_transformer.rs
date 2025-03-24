@@ -88,6 +88,7 @@ fn transform_generator_function(
     function.add_param("$parentScope", &WasmType::r#ref("$Scope"));
     function.add_param("$this", &WasmType::Anyref);
     function.add_param("$arguments", &WasmType::r#ref("$JSArgs"));
+    function.add_param("$meta", &WasmType::Anyref);
     function.add_result(WasmType::Anyref);
 
     function.locals = locals;

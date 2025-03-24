@@ -603,10 +603,14 @@ impl WasmTranslator {
             "$arguments".to_string(),
             &WasmType::Ref("$JSArgs".into(), Nullable::False),
         );
+        self.current_function()
+            .add_param("$meta".to_string(), &WasmType::Anyref);
         self.current_function().set_results(vec![WasmType::Anyref]);
 
         self.current_function()
             .add_local_exact("$scope", WasmType::Ref("$Scope".into(), Nullable::False));
+        self.current_function()
+            .add_local_exact("$new_target", WasmType::Anyref);
         self.current_function().add_instructions(vec![
             W::local_get("$parentScope"),
             W::call("$new_scope"),
@@ -631,6 +635,20 @@ impl WasmTranslator {
             );
             self.current_function().add_instructions(instructions);
         }
+
+        self.current_function().add_instructions(vec![
+            W::local_get("$meta"),
+            W::RefTest(WasmType::NullRef),
+            W::r#if(
+                vec![W::ref_null_any(), W::local_set("$new_target")],
+                Some(vec![
+                    W::local_get("$meta"),
+                    W::RefCast(WasmType::r#ref("$FunctionMetadata")),
+                    W::struct_get("$FunctionMetadata", "$new_target"),
+                    W::local_set("$new_target"),
+                ]),
+            ),
+        ]);
 
         // add a dummy call to know that we're done with arguments declaration
         self.current_function()
@@ -713,6 +731,7 @@ impl WasmTranslator {
         &mut self,
         call: &Call,
         get_this: W,
+        new_target: W,
         additional_instructions: Option<InstructionsList>,
         will_use_return: bool,
     ) -> InstructionsList {
@@ -839,6 +858,7 @@ impl WasmTranslator {
                     get_this,
                     W::local_get(&call_arguments),
                     W::ref_cast(WasmType::r#ref("$JSArgs")),
+                    new_target,
                     W::call("$call_function"),
                 ]);
             }
@@ -1201,16 +1221,26 @@ impl WasmTranslator {
             Expression::PropertyAccess(property_access) => {
                 self.translate_property_access(property_access, None)
             }
-            Expression::New(new) => self.translate_new(new),
+            Expression::New(new) => self.translate_new(new, will_use_return),
             // TODO: the default this value is a global object
-            Expression::Call(call) => {
-                self.translate_call(call, W::ref_null_any(), None, will_use_return)
-            }
+            Expression::Call(call) => self.translate_call(
+                call,
+                W::ref_null_any(),
+                W::ref_null_any(),
+                None,
+                will_use_return,
+            ),
             Expression::SuperCall(_super_call) => todo!(),
             Expression::ImportCall(_import_call) => todo!(),
             Expression::Optional(_optional) => todo!(),
             Expression::TaggedTemplate(_tagged_template) => todo!(),
-            Expression::NewTarget => todo!(),
+            Expression::NewTarget => {
+                if will_use_return {
+                    vec![W::local_get("$new_target")]
+                } else {
+                    vec![]
+                }
+            }
             Expression::ImportMeta => todo!(),
             Expression::Assign(assign) => self.translate_assign(assign),
             Expression::Unary(unary) => self.translate_unary(unary),
@@ -2058,10 +2088,14 @@ impl WasmTranslator {
         instructions
     }
 
-    fn translate_new(&mut self, new: &New) -> InstructionsList {
+    fn translate_new(&mut self, new: &New, will_use_return: bool) -> InstructionsList {
         let new_instance = self.current_function().add_local(
             "$new_instance",
             WasmType::Ref("$Object".into(), Nullable::False),
+        );
+        let metadata = self.current_function().add_local(
+            "$metadata",
+            WasmType::Ref("$FunctionMetadata".into(), Nullable::True),
         );
         let prototype_local = self
             .current_function()
@@ -2080,14 +2114,18 @@ impl WasmTranslator {
             W::ref_cast(WasmType::r#ref("$Function")),
             W::call("$get_value_of_property"),
             W::local_set(&prototype_local),
+            W::local_get(&constructor),
+            W::call("$create_function_metadata"),
+            W::local_set(&metadata),
         ];
 
-        vec![
+        let mut result = vec![
             W::call("$create_object"),
             W::local_set(&new_instance),
             ..self.translate_call(
                 new.call(),
                 W::local_get(&new_instance),
+                W::local_get(&metadata),
                 Some(prototype_instructions),
                 true,
             ),
@@ -2101,7 +2139,13 @@ impl WasmTranslator {
             // W::local_get(&prototype_local),
             // W::struct_set("$Object", "$prototype"),
             //
-        ]
+        ];
+
+        if !will_use_return {
+            result.push(W::Drop)
+        }
+
+        result
     }
 
     fn translate_arrow_function(&mut self, function: &ArrowFunction) -> InstructionsList {
@@ -3258,7 +3302,8 @@ impl<'a> Visitor<'a> for WasmTranslator {
     }
 
     fn visit_call(&mut self, node: &'a Call) -> ControlFlow<Self::BreakTy> {
-        let instructions = self.translate_call(node, W::ref_null_any(), None, false);
+        let instructions =
+            self.translate_call(node, W::ref_null_any(), W::ref_null_any(), None, false);
         self.current_function().add_instructions(instructions);
         ControlFlow::Continue(())
     }

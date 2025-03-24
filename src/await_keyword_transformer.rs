@@ -590,6 +590,7 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             (Some("$parentScope".to_string()), WasmType::r#ref("$Scope")),
             (Some("$this".to_string()), WasmType::Anyref),
             (Some("$arguments".to_string()), WasmType::r#ref("$JSArgs")),
+            (Some("$meta".to_string()), WasmType::Anyref),
         ];
         // we need to filter out locals that may have been defined in parent functions that don't
         // ahdere to the JSFunc format
@@ -598,7 +599,10 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             .clone()
             .into_iter()
             .filter(|(name, _)| {
-                *name != "$this" && *name != "$arguments" && *name != "$parentScope"
+                *name != "$this"
+                    && *name != "$arguments"
+                    && *name != "$parentScope"
+                    && *name != "$meta"
             })
             .collect::<IndexMap<String, WasmType>>();
 
@@ -811,6 +815,7 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             (Some("$parentScope".to_string()), WasmType::r#ref("$Scope")),
             (Some("$this".to_string()), WasmType::Anyref),
             (Some("$arguments".to_string()), WasmType::r#ref("$JSArgs")),
+            (Some("$meta".to_string()), WasmType::Anyref),
         ];
         // we need to filter out locals that may have been defined in parent functions that don't
         // ahdere to the JSFunc format
@@ -819,7 +824,10 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             .clone()
             .into_iter()
             .filter(|(name, _)| {
-                *name != "$this" && *name != "$arguments" && *name != "$parentScope"
+                *name != "$this"
+                    && *name != "$arguments"
+                    && *name != "$parentScope"
+                    && *name != "$meta"
             })
             .collect::<IndexMap<String, WasmType>>();
 
@@ -1022,6 +1030,7 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             (Some("$parentScope".to_string()), WasmType::r#ref("$Scope")),
             (Some("$this".to_string()), WasmType::Anyref),
             (Some("$arguments".to_string()), WasmType::r#ref("$JSArgs")),
+            (Some("$meta".to_string()), WasmType::Anyref),
         ];
         // we need to filter out locals that may have been defined in parent functions that don't
         // ahdere to the JSFunc format
@@ -1030,7 +1039,10 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
             .clone()
             .into_iter()
             .filter(|(name, _)| {
-                *name != "$this" && *name != "$arguments" && *name != "$parentScope"
+                *name != "$this"
+                    && *name != "$arguments"
+                    && *name != "$parentScope"
+                    && *name != "$meta"
             })
             .collect::<IndexMap<String, WasmType>>();
 
@@ -1141,6 +1153,9 @@ impl<'a, 'b> FunctionTranformer<'a, 'b> {
         block_func
             .locals
             .insert("$this".to_string(), WasmType::Anyref);
+        block_func
+            .locals
+            .insert("$meta".to_string(), WasmType::Anyref);
         block_func.results = vec![WasmType::Anyref];
         block_func
     }

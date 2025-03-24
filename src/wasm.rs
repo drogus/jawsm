@@ -136,9 +136,15 @@ pub fn generate_module() -> WatModule {
             variables: mut VariableMap,
         }
 
+        struct FunctionMetadata {
+            new_target: anyref,
+        }
+
         // Function types
         type JSArgs = [mut anyref];
-        type JSFunc = fn(scope: Scope, this: anyref, arguments: JSArgs) -> anyref;
+        // TODO: I would prefer meta to be of type Nullable<FunctionMetadata>, but passing null
+        // of a certain type is not well supported in tarnik yet, so for now I'm going with anyref
+        type JSFunc = fn(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref;
 
         struct Function {
             scope: mut Scope,
@@ -289,6 +295,12 @@ pub fn generate_module() -> WatModule {
             // it's usually done
         }
 
+        fn create_function_metadata(new_target: anyref) -> FunctionMetadata {
+            return FunctionMetadata {
+                new_target: new_target
+            };
+        }
+
         fn enable_global_strict_mode() {
             global_strict_mode = 1;
         }
@@ -403,11 +415,11 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
-        fn Promise_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return new_static_string(data!("[object Promise]"), 16);
         }
 
-        fn Promise_catch(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_catch(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let new_promise: Promise = create_new_promise();
             new_promise.own_prototype = promise_prototype;
             let promise: Promise = this as Promise;
@@ -421,7 +433,7 @@ pub fn generate_module() -> WatModule {
             // If we have an argument, pass it as second argument to then()
             if len!(arguments) > 0 {
                 catch_args = create_arguments_2(null, arguments[0]);
-                Promise_then(scope, new_promise, catch_args);
+                Promise_then(scope, new_promise, catch_args, null);
             }
 
             return new_promise;
@@ -488,15 +500,15 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, Object_defineProperty, null));
         }
 
-        fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return get_own_prototype(first_argument_or_null(arguments));
         }
 
-        fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return new_static_string(data!("[object Object]"), 15);
         }
 
-        fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             if ref_test!(this, Array) {
                 let array: Array = this as Array;
                 let length: i32 = array.length;
@@ -768,10 +780,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Object_create_simple(value: anyref) -> anyref {
-            return Object_create(global_scope as Scope, null, create_arguments_1(value));
+            return Object_create(global_scope as Scope, null, create_arguments_1(value), null);
         }
 
-        fn Object_create(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Object_create(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let object: Object = create_object();
             object.own_prototype = arguments[0];
             return object;
@@ -780,7 +792,7 @@ pub fn generate_module() -> WatModule {
         fn create_error(constructor_offset: i32, message: String) -> Object {
             let constructor: Function = get_variable(global_scope as Scope, constructor_offset) as Function;
             let new_instance: Object = create_object();
-            call_function(constructor, new_instance, create_arguments_1(message));
+            call_function(constructor, new_instance, create_arguments_1(message), null);
 
             new_instance.own_prototype = get_property_value(constructor, data!("prototype"));
             set_property_value(new_instance, data!("constructor"), constructor);
@@ -788,7 +800,7 @@ pub fn generate_module() -> WatModule {
             return new_instance;
         }
 
-        fn Object_defineProperty(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Object_defineProperty(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let args_len: i32 = len!(arguments);
 
             if args_len == 0 {
@@ -925,13 +937,13 @@ pub fn generate_module() -> WatModule {
         fn get_iterator(target: anyref) -> anyref {
             // TODO: handle lack of iterator or iterator not being a function
             let iterator_func: Function = get_property_value_sym(target, symbol_iterator) as Function;
-            return call_function(iterator_func, null, create_arguments_0());
+            return call_function(iterator_func, null, create_arguments_0(), null);
         }
 
         fn get_iterator_next(iterator: anyref) -> anyref {
             // TODO: handle next not being a function
             let next_func: Function = get_property_value(iterator, data!("next")) as Function;
-            let result: anyref = call_function(next_func, null, create_arguments_0());
+            let result: anyref = call_function(next_func, null, create_arguments_0(), null);
 
             return result;
         }
@@ -946,14 +958,14 @@ pub fn generate_module() -> WatModule {
             return get_property_value(result, data!("value"));
         }
 
-        fn Array_length(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Array_length(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: can this be anything else?
             let array: Array = this as Array;
 
             return new_number(array.length as f64);
         }
 
-        fn Array_set_length(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Array_set_length(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let length_number: anyref = ToNumber(first_argument_or_null(arguments));
 
             return null;
@@ -1013,7 +1025,7 @@ pub fn generate_module() -> WatModule {
                         hint = new_static_string(data!("default"), 6);
                     }
 
-                    result = call_function(to_primitive_maybe as Function, target, create_arguments_1(hint));
+                    result = call_function(to_primitive_maybe as Function, target, create_arguments_1(hint), null);
 
                     if is_primitive(result) {
                         return result;
@@ -1098,7 +1110,7 @@ pub fn generate_module() -> WatModule {
 
             maybe_func = get_property_value(target, offset);
             if ref_test!(maybe_func, Function) {
-                return call_function(maybe_func as Function, target, create_arguments_0());
+                return call_function(maybe_func as Function, target, create_arguments_0(), null);
             }
 
             return i31_result;
@@ -1416,27 +1428,27 @@ pub fn generate_module() -> WatModule {
             };
         }
 
-        fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return create_array(0);
         }
 
-        fn Number_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Number_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
             return ToNumber(arg);
         }
 
-        fn Boolean_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Boolean_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
             return ToBoolean(arg);
         }
 
-        fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return Symbol {};
         }
 
-        fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             if len!(arguments) > 0 {
                 if is_null_or_undefined(arguments[1]) {
                     return create_object();
@@ -1451,7 +1463,7 @@ pub fn generate_module() -> WatModule {
             return create_object();
         }
 
-        fn Error_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Error_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: here we should also handle a case when Error constructor is called without new
             let message: anyref = null;
             if len!(arguments) > 0 {
@@ -1464,30 +1476,30 @@ pub fn generate_module() -> WatModule {
             return this;
         }
 
-        fn ReferenceError_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn ReferenceError_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let message: anyref = null;
             if len!(arguments) > 0 {
-                Error_constructor(scope, this, arguments);
+                Error_constructor(scope, this, arguments, null);
             }
             set_property_value(this, data!("name"), new_static_string(data!("ReferenceError"), 14));
 
             return this;
         }
 
-        fn TypeError_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn TypeError_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let message: anyref = null;
             if len!(arguments) > 0 {
-                Error_constructor(scope, this, arguments);
+                Error_constructor(scope, this, arguments, null);
             }
             set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 14));
 
             return this;
         }
 
-        fn SyntaxError_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn SyntaxError_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let message: anyref = null;
             if len!(arguments) > 0 {
-                Error_constructor(scope, this, arguments);
+                Error_constructor(scope, this, arguments, null);
             }
             set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 11));
 
@@ -1509,7 +1521,7 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
-        fn Function_call(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Function_call(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let mut new_this: anyref = null;
             let mut rest: JSArgs = [null; 0];
             let args_length: i32 = len!(arguments);
@@ -1527,12 +1539,13 @@ pub fn generate_module() -> WatModule {
                 }
             }
 
-            // fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
+            // fn call_function(func: anyref, this: anyref, arguments: JSArgs, meta:
+            // Nullable<FunctionMetadata>) -> anyref {
             // TODO: tail call
-            return call_function(this, new_this, rest);
+            return call_function(this, new_this, rest, null);
         }
 
-        fn Function_bind(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Function_bind(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: throw error if this is not true?
             if len!(arguments) > 0 && ref_test!(this, Function) {
                 let function: Function = this as Function;
@@ -1551,10 +1564,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Function_bind_simple(function: anyref, this: anyref) -> anyref {
-            return Function_bind(global_scope as Scope, function, create_arguments_1(this));
+            return Function_bind(global_scope as Scope, function, create_arguments_1(this), null);
         }
 
-        fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Function_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return new_static_string(data!("function () { [native code] }"), 29);
         }
 
@@ -1567,7 +1580,7 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
-        fn Number_toString(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Number_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let mut radix: i32 = 10;
             let radix_maybe: anyref = first_argument_or_null(arguments);
             if !ref_test!(radix_maybe, null) {
@@ -1640,24 +1653,24 @@ pub fn generate_module() -> WatModule {
             try {
                 // Handle finally callback if present
                 if ref_test!(promise.finally_callback, Function) {
-                    result = call_function(promise.finally_callback as Function, null, arguments);
+                    result = call_function(promise.finally_callback as Function, null, arguments, null);
                 }
 
                 // TODO: is the ordering here important?
                 // Handle catch callback if present
                 if ref_test!(promise.catch_callback, Function) {
-                    result = call_function(promise.catch_callback as Function, null, arguments);
+                    result = call_function(promise.catch_callback as Function, null, arguments, null);
                 } else {
                     result = previous_result;
                 }
 
                 // Reuse arguments array for resolve call
                 arguments[0] = result;
-                Promise_resolve(scope, promise, arguments);
+                Promise_resolve(scope, promise, arguments, null);
             }
             catch(JSException, argument: anyref) {
                 arguments = create_arguments_1(argument);
-                Promise_reject(scope, promise, arguments);
+                Promise_reject(scope, promise, arguments, null);
             }
         }
 
@@ -1668,27 +1681,27 @@ pub fn generate_module() -> WatModule {
             try {
                 // Handle finally callback if present
                 if ref_test!(promise.finally_callback, Function) {
-                    result = call_function(promise.finally_callback as Function, null, arguments);
+                    result = call_function(promise.finally_callback as Function, null, arguments, null);
                 }
 
                 // Handle then callback if present
                 if ref_test!(promise.then_callback, Function) {
-                    result = call_function(promise.then_callback as Function, null, arguments);
+                    result = call_function(promise.then_callback as Function, null, arguments, null);
                 } else {
                     result = previous_result;
                 }
 
                 // Reuse arguments array for resolve call
                 arguments[0] = result;
-                Promise_resolve(scope, promise, arguments);
+                Promise_resolve(scope, promise, arguments, null);
             }
             catch(JSException, argument: anyref) {
                 arguments = create_arguments_1(argument);
-                Promise_reject(scope, promise, arguments);
+                Promise_reject(scope, promise, arguments, null);
             }
         }
 
-        fn Promise_finally(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_finally(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let new_promise: Promise = create_new_promise();
             new_promise.own_prototype = promise_prototype;
             let promise: Promise = this as Promise;
@@ -1731,10 +1744,10 @@ pub fn generate_module() -> WatModule {
             if ref_test!(then_function_any, Function) {
                 if ref_test!(thenable, Promise) {
                     // log(create_arguments_1(create_string_from_array("thenable is a promise")));
-                    Promise_then(global_scope as Scope, thenable, create_arguments_1(callback));
+                    Promise_then(global_scope as Scope, thenable, create_arguments_1(callback), null);
                 } else {
                     // log(create_arguments_1(create_string_from_array("thenable is not a promise")));
-                    call_function(then_function_any, null, create_arguments_1(callback));
+                    call_function(then_function_any, null, create_arguments_1(callback), null);
                 }
             } else {
                 let error: anyref = create_error(data!("TypeError"), create_string_from_array("then has to be a function"));
@@ -1742,7 +1755,7 @@ pub fn generate_module() -> WatModule {
             }
         }
 
-        fn Promise_then(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_then(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let new_promise: Promise = create_new_promise();
             new_promise.own_prototype = promise_prototype;
             let promise: Promise = this as Promise;
@@ -1790,12 +1803,12 @@ pub fn generate_module() -> WatModule {
         fn instantiate_promise(resolve: Function) -> Promise {
             let constructor: Function = get_variable(global_scope as Scope, data!("Promise")) as Function;
             let arguments: JSArgs = create_arguments_1(resolve);
-            let promise: Promise = call_function(constructor, null, arguments) as Promise;
+            let promise: Promise = call_function(constructor, null, arguments, null) as Promise;
 
             return return_new_instance_result(promise, null, promise_prototype, constructor) as Promise;
         }
 
-        fn AsyncGenerator_next(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn AsyncGenerator_next(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // this here is generator
             let generator: AsyncGenerator = this as AsyncGenerator;
 
@@ -1833,17 +1846,17 @@ pub fn generate_module() -> WatModule {
             // return result;
         }
 
-        fn Generator_iterator(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Generator_iterator(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return this;
         }
 
-        fn Generator_next(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Generator_next(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // this here is generator
             let generator: Generator = this as Generator;
 
             let callback: Function = generator.next_callback;
 
-            let generator_result: GeneratorResult = call_function(callback, null, arguments) as GeneratorResult;
+            let generator_result: GeneratorResult = call_function(callback, null, arguments, null) as GeneratorResult;
 
             let result: Object = create_object();
 
@@ -1862,7 +1875,7 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
-        fn Promise_resolve(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_resolve(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let mut resolve_result: anyref;
             let promise: Promise = this as Promise;
             let promises: PromisesArray = promise.chained_promises;
@@ -1893,7 +1906,7 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
-        fn Promise_reject(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_reject(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let mut reject_result: anyref;
             let promise: Promise = this as Promise;
             let promises: PromisesArray = promise.chained_promises;
@@ -1924,18 +1937,18 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
-        fn Generator_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Generator_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: it looks like we may have to implement it:
             // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/GeneratorFunction/GeneratorFunction
             return null;
         }
 
-        fn AsyncGenerator_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn AsyncGenerator_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: implement it
             return null;
         }
 
-        fn Promise_constructor(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn Promise_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let promise: Promise = create_new_promise();
             let resolve_func: Function;
             let reject_func: Function;
@@ -1956,11 +1969,11 @@ pub fn generate_module() -> WatModule {
 
                 try {
                     resolver = arg1 as Function;
-                    call_function(resolver, null, callback_arguments);
+                    call_function(resolver, null, callback_arguments, null);
                 }
                 catch(JSException, err: anyref) {
                     reject_args = create_arguments_1(err);
-                    Promise_reject(scope, promise, reject_args);
+                    Promise_reject(scope, promise, reject_args, null);
                 }
 
                 return promise;
@@ -2000,7 +2013,7 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
-        fn empty_generator_callback(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn empty_generator_callback(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let callback: Function = new_function(global_scope as Scope, empty_generator_callback, null);
             let result: GeneratorResult = GeneratorResult {
                 next_callback: callback,
@@ -2023,7 +2036,7 @@ pub fn generate_module() -> WatModule {
 
             generator.next_callback = callback;
 
-            call_function(resolve, null, create_arguments_1(result));
+            call_function(resolve, null, create_arguments_1(result), null);
 
             return null;
         }
@@ -2042,12 +2055,12 @@ pub fn generate_module() -> WatModule {
 
             generator.next_callback = callback;
 
-            call_function(resolve, null, create_arguments_1(result));
+            call_function(resolve, null, create_arguments_1(result), null);
 
             return null;
         }
 
-        fn empty_async_generator_callback(scope: Scope, this: anyref, arguments: JSArgs) -> anyref {
+        fn empty_async_generator_callback(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let resolve: Function = first_argument_or_null(arguments) as Function;
             return resolve_empty_generator_callback(scope, resolve);
         }
@@ -2064,7 +2077,7 @@ pub fn generate_module() -> WatModule {
 
             generator.next_callback = callback;
 
-            call_function(resolve, null, create_arguments_1(result));
+            call_function(resolve, null, create_arguments_1(result), null);
 
             return null;
         }
@@ -2633,7 +2646,7 @@ pub fn generate_module() -> WatModule {
             let constructor: Function = get_variable(global_scope as Scope, data!("ReferenceError")) as Function;
             let object: Object = create_object();
             let arguments: JSArgs = create_arguments_1(new_static_string(data!("could not find reference"), 24));
-            call_function(constructor, object, arguments);
+            call_function(constructor, object, arguments, null);
 
             return return_new_instance_result(object, null, get_property(constructor, data!("prototype")), constructor);
         }
@@ -2996,7 +3009,7 @@ pub fn generate_module() -> WatModule {
                     let accessor: AccessorMethod = property.value as AccessorMethod;
                     let function: Function = accessor.get as Function;
                     function.this = target;
-                    let value: anyref = call_function(function, target, create_arguments_0());
+                    let value: anyref = call_function(function, target, create_arguments_0(), null);
                     return value;
                 } else {
                     return property.value;
@@ -3058,7 +3071,7 @@ pub fn generate_module() -> WatModule {
                     let accessor: AccessorMethod = value_property.value as AccessorMethod;
                     let function: Function = accessor.set as Function;
                     let arguments: JSArgs = create_arguments_1(value);
-                    call_function(function, target, arguments);
+                    call_function(function, target, arguments, null);
                 } else {
                     value_property.value = value;
                 }
@@ -3522,7 +3535,7 @@ pub fn generate_module() -> WatModule {
                 } else {
                     let to_string: Property = maybe_to_string as Property;
                     if ref_test!(to_string.value, Function) {
-                        let result: anyref = call_function(to_string.value as Function, target, create_arguments_0());
+                        let result: anyref = call_function(to_string.value as Function, target, create_arguments_0(), null);
                         if ref_test!(result, String) {
                             name_str = result as String;
                             offset = get_data_offset_str(name_str.data);
@@ -3636,7 +3649,7 @@ pub fn generate_module() -> WatModule {
                     let function: Function = accessor.set as Function;
                     function.this = target;
                     let arguments: JSArgs = create_arguments_1(value);
-                    call_function(function, target, arguments);
+                    call_function(function, target, arguments, null);
                 } else {
                     value_property.value = value;
                 }
@@ -3955,9 +3968,7 @@ pub fn generate_module() -> WatModule {
         fn __yield_drop__() {
         }
 
-
-
-        fn call_function(func: anyref, this: anyref, arguments: JSArgs) -> anyref {
+        fn call_function(func: anyref, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let function: Function;
             let js_func: JSFunc;
             let current_this: anyref;
@@ -3975,7 +3986,7 @@ pub fn generate_module() -> WatModule {
                 current_this = this;
             }
 
-            return js_func(function.scope, current_this, arguments);
+            return js_func(function.scope, current_this, arguments, meta);
         }
 
         fn add_strings(str1: String, str2: String) -> String {
@@ -4926,7 +4937,7 @@ pub fn generate_module() -> WatModule {
                     func = pollables[index].func;
                     if ref_test!(func, Function) {
                         // TODO: handle this differently for arrow functions or binding
-                        call_function(func, null, []);
+                        call_function(func, null, [], null);
                         return;
                     }
                     // TODO: handle async variant
@@ -5026,7 +5037,7 @@ pub fn generate_module() -> WatModule {
         //     // TODO: handle the case where we don't get anything
         //     let to_string_func: Function = (get_property(target, data!("toString")) as Property).value as Function;
         //     // TODO: handle a case when toString does not return a String
-        //     let result = call_function(to_string_func, target, create_arguments_0());
+        //     let result = call_function(to_string_func, target, create_arguments_0()), null;
         //
         //     if ref_test!(result, StaticString) {
         //         return memory_to_string((result as StaticString).offset, (result as StaticString).length);
@@ -5228,15 +5239,15 @@ pub fn generate_module() -> WatModule {
             set_property(symbol_constructor, data!("asyncIterator"), create_bare_property(symbol_async_iterator));
             set_property(symbol_constructor, data!("toPrimitive"), create_bare_property(symbol_to_primitive));
 
-            let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype)) as Object;
+            let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype), null) as Object;
             set_property_value(error_prototype, data!("constructor"), error_constructor);
             set_property_value(error_constructor, data!("prototype"), error_prototype);
 
-            let reference_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype)) as Object;
+            let reference_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype), null) as Object;
             set_property_value(reference_error_prototype, data!("constructor"), reference_error_constructor);
             set_property_value(reference_error_constructor, data!("prototype"), reference_error_prototype);
 
-            let type_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype)) as Object;
+            let type_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype), null) as Object;
             set_property_value(type_error_prototype, data!("constructor"), type_error_constructor);
             set_property_value(type_error_constructor, data!("prototype"), type_error_prototype);
 

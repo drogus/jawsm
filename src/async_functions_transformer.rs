@@ -70,6 +70,7 @@ fn replace_returns(cursor: &mut InstructionsCursor) {
                 W::ref_null_any(),
                 W::local_get("$resolve-call-argument"),
                 W::call("$create_arguments_1"),
+                W::ref_null_any(),
                 W::call("$call_function"),
                 W::ref_null_any(),
                 W::Return,
@@ -90,6 +91,7 @@ fn transform_async_function(
     function.add_param("$parentScope", &WasmType::r#ref("$Scope"));
     function.add_param("$this", &WasmType::Anyref);
     function.add_param("$arguments", &WasmType::r#ref("$JSArgs"));
+    function.add_param("$meta", &WasmType::Anyref);
     function.add_result(WasmType::Anyref);
 
     function.locals = locals;
@@ -120,6 +122,8 @@ fn transform_async_function(
         W::local_get("$this"),
         W::call("$new_function"),
         W::ArrayNewFixed("$JSArgs".to_string(), 1),
+        // meta
+        W::ref_null_any(),
         W::call("$call_function"),
         W::ref_null_any(),
         W::global_get("$promise_prototype"),
