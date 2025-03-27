@@ -1240,8 +1240,7 @@ pub fn generate_module() -> WatModule {
             let result_i31ref: i31ref;
             let str: String;
             if ref_test!(target, null) {
-                result_i31ref = 4 as i31ref;
-                return result_i31ref;
+                return new_number(f64::NAN);
             }
 
             if ref_test!(target, Number) {
@@ -1273,42 +1272,53 @@ pub fn generate_module() -> WatModule {
             return ToNumber(ToPrimitive(target, TO_PRIMITIVE_NUMBER));
         }
 
+        fn ToNumeric(target: anyref) -> anyref {
+            let mut result: anyref = ToPrimitive(target, TO_PRIMITIVE_NUMBER);
+            if ref_test!(result, BigInt) {
+                return result;
+            }
+
+            return ToNumber(result);
+        }
+
         fn ToPrimitive(target: anyref, desired_type: i32) -> anyref {
             let to_primitive_maybe: anyref = get_property_value_sym(target, symbol_to_primitive);
             let hint: StaticString = new_static_string(0, 0);
             let result: anyref;
 
-            if !ref_test!(to_primitive_maybe, null) {
-                if ref_test!(to_primitive_maybe, Function) {
-                    if desired_type == TO_PRIMITIVE_NUMBER {
-                        hint = new_static_string(data!("number"), 6);
-                    } else if desired_type == TO_PRIMITIVE_STRING {
-                        hint = new_static_string(data!("string"), 6);
-                    } else {
-                        hint = new_static_string(data!("default"), 6);
-                    }
+            if !is_primitive(target) {
+                if !ref_test!(to_primitive_maybe, null) {
+                    if ref_test!(to_primitive_maybe, Function) {
+                        if desired_type == TO_PRIMITIVE_NUMBER {
+                            hint = new_static_string(data!("number"), 6);
+                        } else if desired_type == TO_PRIMITIVE_STRING {
+                            hint = new_static_string(data!("string"), 6);
+                        } else {
+                            hint = new_static_string(data!("default"), 6);
+                        }
 
-                    result = call_function(to_primitive_maybe as Function, target, create_arguments_1(hint), null);
+                        result = call_function(to_primitive_maybe as Function, target, create_arguments_1(hint), null);
 
-                    if is_primitive(result) {
-                        return result;
+                        if is_primitive(result) {
+                            return result;
+                        } else {
+                            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+                            throw!(JSException, error);
+                        }
                     } else {
-                        let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert object to primitive value"));
+                        let error: anyref = create_error(data!("TypeError"), create_string_from_array("Symbol.toPrimitive value has to be a function"));
                         throw!(JSException, error);
                     }
                 } else {
-                    let error: anyref = create_error(data!("TypeError"), create_string_from_array("Symbol.toPrimitive value has to be a function"));
-                    throw!(JSException, error);
-                }
-            } else {
-                if desired_type == 0 {
-                    desired_type = TO_PRIMITIVE_NUMBER;
-                }
+                    if desired_type == 0 {
+                        desired_type = TO_PRIMITIVE_NUMBER;
+                    }
 
-                return OrdinaryToPrimtive(target, desired_type);
+                    return OrdinaryToPrimtive(target, desired_type);
+                }
             }
 
-            return null;
+            return target;
         }
 
         fn ToBoolean(value: anyref) -> anyref {
@@ -1861,6 +1871,9 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, Number_toString, null));
 
+            set_property(object, data!("valueOf"),
+                create_property_function(global_scope as Scope, Number_valueOf, null));
+
             return object;
         }
 
@@ -1874,6 +1887,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn String_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return this;
+        }
+
+        fn Number_valueOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return this;
         }
 
@@ -2126,9 +2143,9 @@ pub fn generate_module() -> WatModule {
 
             // set "special" variables (not accessible from JS), but accessible through our custom
             // generated code
-            assign_variable(callback_scope, -1, generator);
+            declare_variable(callback_scope, -1, generator, VARIABLE_VAR);
             // yield result
-            assign_variable(callback_scope, -2, first_argument_or_null(arguments));
+            declare_variable(callback_scope, -2, first_argument_or_null(arguments), VARIABLE_VAR);
 
             callback.scope = callback_scope;
 
@@ -4322,63 +4339,89 @@ pub fn generate_module() -> WatModule {
             };
         }
 
+        fn is_string(value: anyref) -> i32 {
+            return ref_test!(value, String) || ref_test!(value, StaticString);
+        }
+
         fn add(arg1: anyref, arg2: anyref) -> anyref {
-            let result: f64;
-            let static_str1: StaticString;
-            let static_str2: StaticString;
             let str1: String;
             let str2: String;
+            let result: f64;
 
-            // TODO: this doesn't take into account casting, it can only add two objects
-            // of the same type (and only numbers and strings for now)
+            arg1 = ToPrimitive(arg1, 0);
+            arg2 = ToPrimitive(arg2, 0);
+
+            if is_string(arg1) || is_string(arg2) {
+                str1 = ToString(arg1);
+                str2 = ToString(arg2);
+
+                return add_strings(str1, str2);
+            }
+
+            arg1 = ToNumeric(arg1);
+            arg2 = ToNumeric(arg2);
+
             if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
                 result = (arg1 as Number).value + (arg2 as Number).value;
                 return new_number(result);
+            } else if ref_test!(arg1, BigInt) || ref_test!(arg2, BigInt) {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Not yet implemented: BigInt add"));
+                throw!(JSException, error);
             }
 
-            if ref_test!(arg1, StaticString) && ref_test!(arg2, StaticString) {
-                static_str1 = arg1 as StaticString;
-                static_str2 = arg2 as StaticString;
-                return add_static_strings(static_str1.offset, static_str1.length, static_str2.offset, static_str2.length);
-            }
+            // TODO: handle BigInt
 
-            if ref_test!(arg1, String) && ref_test!(arg2, StaticString) {
-                str1 = arg1 as String;
-                static_str2 = arg2 as StaticString;
-                return add_static_string_to_string(str1, static_str2.offset, static_str2.length);
-            }
-
-            return null;
+            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot mixed different types for addition, use explicit conversion"));
+            throw!(JSException, error);
         }
 
         fn div(arg1: anyref, arg2: anyref) -> anyref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: f64 = num1.value / num2.value;
+            arg1 = ToNumeric(arg1);
+            arg2 = ToNumeric(arg2);
+
+            if ref_test!(arg1, Number) || ref_test!(arg2, Number) {
+                let result: f64 = (arg1 as Number).value / (arg2 as Number).value;
                 return new_number(result);
+            } else if ref_test!(arg1, BigInt) || ref_test!(arg2, BigInt) {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Not yet implemented: BigInt div"));
+                throw!(JSException, error);
             }
-            return null;
+
+            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot mixed different types for division, use explicit conversion"));
+            throw!(JSException, error);
+
         }
 
         fn sub(arg1: anyref, arg2: anyref) -> anyref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: f64 = num1.value - num2.value;
+            arg1 = ToNumeric(arg1);
+            arg2 = ToNumeric(arg2);
+
+            if ref_test!(arg1, Number) || ref_test!(arg2, Number) {
+                let result: f64 = (arg1 as Number).value - (arg2 as Number).value;
                 return new_number(result);
+            } else if ref_test!(arg1, BigInt) || ref_test!(arg2, BigInt) {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Not yet implemented: BigInt sub"));
+                throw!(JSException, error);
             }
-            return null;
+
+            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot mixed different types for subtraction, use explicit conversion"));
+            throw!(JSException, error);
         }
 
         fn mul(arg1: anyref, arg2: anyref) -> anyref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: f64 = num1.value * num2.value;
+            arg1 = ToNumeric(arg1);
+            arg2 = ToNumeric(arg2);
+
+            if ref_test!(arg1, Number) || ref_test!(arg2, Number) {
+                let result: f64 = (arg1 as Number).value * (arg2 as Number).value;
                 return new_number(result);
+            } else if ref_test!(arg1, BigInt) || ref_test!(arg2, BigInt) {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Not yet implemented: BigInt mul"));
+                throw!(JSException, error);
             }
-            return null;
+
+            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot mixed different types for multiplication, use explicit conversion"));
+            throw!(JSException, error);
         }
 
         fn mod_op(arg1: anyref, arg2: anyref) -> anyref {
@@ -5622,6 +5665,7 @@ pub fn generate_module() -> WatModule {
                     );
                     log(args);
                 }
+                throw!(JSException, error);
                 return 1;
             }
 
