@@ -2418,7 +2418,23 @@ impl WasmTranslator {
                 ]
             }
             Literal::Int(i) => vec![W::f64_const(*i as f64), W::call("$new_number")],
-            Literal::BigInt(_big_int) => todo!(),
+            Literal::BigInt(big_int) => {
+                let (sign, digits) = big_int.to_radix_be(10);
+                let negative = match sign {
+                    num_bigint::Sign::Minus => 1,
+                    _ => 0,
+                };
+                vec![
+                    ..digits
+                        .iter()
+                        .map(|d| W::I32Const(*d as i32))
+                        .collect::<InstructionsList>(),
+                    W::ArrayNewFixed("$I32Array".into(), digits.len() as u16),
+                    W::I32Const(10),
+                    W::I32Const(negative),
+                    W::call("$bigint_from_digits"),
+                ]
+            }
             Literal::Bool(b) => vec![
                 W::i32_const(if *b { 1 } else { 0 }),
                 W::call("$new_boolean"),

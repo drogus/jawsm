@@ -625,6 +625,7 @@ dependencies = [
  "boa_parser",
  "bytemuck",
  "lazy_static",
+ "num-bigint",
  "rand",
  "serde",
  "similar",

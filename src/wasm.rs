@@ -48,10 +48,10 @@ pub fn generate_module() -> WatModule {
 
         static mut global_strict_mode: i32 = 0;
 
-        type CharArray = [mut i32];
 
+        type I32Array = [mut i32];
         struct String {
-            data: mut CharArray,
+            data: mut I32Array,
             length: mut i32
         }
         type StringArray = [mut Nullable<String>];
@@ -179,6 +179,11 @@ pub fn generate_module() -> WatModule {
             value: mut f64
         }
 
+        struct BigInt {
+            negative: i32,
+            digits: I32Array,
+        }
+
         type AnyrefArray = [mut anyref];
 
         struct Array {
@@ -268,6 +273,8 @@ pub fn generate_module() -> WatModule {
         static mut global_array_prototype: Nullable<Object> = null;
         static mut global_function_prototype: Nullable<Object> = null;
         static mut global_number_prototype: Nullable<Object> = null;
+        static mut global_string_prototype: Nullable<Object> = null;
+        static mut global_bigint_prototype: Nullable<Object> = null;
         static mut global_symbol_prototype: Nullable<Object> = null;
         static mut pollables: PollablesArray = [null; 2];
         static mut current_string_lookup: Nullable<String> = null;
@@ -514,7 +521,7 @@ pub fn generate_module() -> WatModule {
                 let length: i32 = array.length;
                 let elements: AnyrefArray = array.array;
                 let strings: StringArray = [null; array.length];
-                let new_data: CharArray;
+                let new_data: I32Array;
                 let mut i: i32 = 0;
                 let mut j: i32 = 0;
                 let mut k: i32 = 0;
@@ -523,7 +530,7 @@ pub fn generate_module() -> WatModule {
                 let mut result_length: i32 = 0;
                 let mut str: String;
                 let mut str_length: i32;
-                let mut str_data: CharArray;
+                let mut str_data: I32Array;
 
                 // TODO: this should delegate to join() in the future
                 while i < length {
@@ -580,7 +587,9 @@ pub fn generate_module() -> WatModule {
             } else if ref_test!(target, null) {
                 return create_string_from_array("undefined");
             } else if is_primitive(target) {
-                if ref_test!(target, Number) {
+                if ref_test!(target, BigInt) {
+                    return BigIntToString(target as BigInt, 10);
+                } else if ref_test!(target, Number) {
                     return NumberToString(target as Number, 10);
                 } else if ref_test!(target, i31ref) {
                     let v: i32 = target as i31ref as i32;
@@ -613,6 +622,261 @@ pub fn generate_module() -> WatModule {
         fn NumberToString(number: Number, radix: i32) -> String {
             let written_length: i32 = number_to_string_memory(number.value, radix, free_memory_offset);
             return memory_to_string(free_memory_offset, written_length);
+        }
+
+        fn ToBigInt(target: anyref) -> BigInt {
+            if ref_test!(target, BigInt) {
+                return target as BigInt;
+            }
+
+            let str: String = string_trim(ToString(target));
+            let str_data: I32Array = str.data;
+            let str_len: i32 = len!(str_data);
+            let mut valid: i32 = 1;
+            let mut i: i32 = 0;
+            let mut negative: i32 = 0;
+            let mut base: i32 = 10;
+            let mut c: i32;
+            let digits_start: i32 = 0;
+            let result: I32Array;
+
+            if str_len == 0 {
+                return BigInt {
+                    negative: 0,
+                    digits: [0; 0],
+                };
+            }
+
+            if str_data[i] == '-' {
+                i = 1;
+                negative = 1;
+            }
+
+            if str_len - i >= 3 && str_data[i] == '0' {
+                if str_data[i+1] == 'x' || str_data[i+1] == 'X' {
+                    base = 16;
+                    i += 2;
+                }
+
+                if str_data[i+1] == 'o' || str_data[i+1] == 'O' {
+                    base = 8;
+                    i += 2;
+                }
+
+                if str_data[i+1] == 'b' || str_data[i+1] == 'B' {
+                    base = 2;
+                    i += 2;
+                }
+            }
+
+            digits_start = i;
+            if str_len - i > 0 {
+                while i < str_len {
+                    c = str_data[i];
+                    if c < '0' || c > '9' {
+                        valid = 0;
+                        break;
+                    }
+
+                    i += 1;
+                }
+            } else {
+                valid = 0;
+            }
+
+            if !valid {
+                let error: anyref = create_error(data!("SyntaxError"), add_strings(add_strings(create_string_from_array("Cannot convert "), str), create_string_from_array(" to a BigInt")));
+                throw!(JSException, error);
+            }
+
+            i = digits_start;
+            result = [0; str_len - i];
+            while i < str_len {
+                result[i - digits_start] = str_data[i];
+            }
+
+            return bigint_from_digits(result, base, negative);
+        }
+
+        fn bigint_from_digits(digits: I32Array, base_from: i32, negative: i32) -> BigInt {
+            let bigint_digits: I32Array = digits_to_bigint_array(digits, base_from);
+            return BigInt {
+                negative: negative,
+                digits: bigint_digits,
+            };
+        }
+
+        // This is a simplified version of an algorithm that V8 uses
+        fn digits_to_bigint_array(digits: I32Array, base_from: i32) -> I32Array {
+            let bigint: I32Array = [0; len!(digits)];
+            let bigint_length: i32 = 0;
+            // it looks like if we use anything bigger than 2^24 we won't fit in the available
+            // types and overflow. I could use i64 for calculations before filling in I32Array,
+            // but I alo would like to leave some buffer for computation for addition,
+            // multiplication etc.
+            let BASE: i32 = 0x1000000; // 2^24
+            let mut carry: i32;
+            let mut i: i32;
+            let mut temp: i32;
+            let mut add_carry: i32;
+            let mut total: i32;
+            let result: I32Array;
+            let mut d: i32;
+            let mut di: i32 = 0;
+            let digits_length: i32 = len!(digits);
+
+            while di < digits_length {
+                d = digits[di];
+                carry = 0;
+                i = 0;
+                while i < bigint_length {
+                    temp = bigint[i] * base_from + carry;
+                    bigint[i] = temp % BASE;
+                    carry = temp/BASE;
+                    i += 1;
+                }
+                if carry > 0 {
+                    bigint[bigint_length] = carry;
+                    bigint_length += 1;
+                }
+
+                add_carry = d;
+                i = 0;
+                while add_carry > 0 && i < bigint_length {
+                    total = bigint[i] + add_carry;
+                    bigint[i] = total % BASE;
+                    add_carry = total / BASE;
+                    i += 1;
+                }
+                if add_carry > 0 {
+                    bigint[bigint_length] = add_carry;
+                    bigint_length += 1;
+                }
+
+                di += 1;
+            }
+
+            result = [0; bigint_length];
+
+            i = 0;
+            while i < bigint_length {
+                result[i] = bigint[i];
+                i += 1;
+            }
+
+            return result;
+        }
+
+        fn reverse_i32_array(array: I32Array) -> I32Array {
+            let len: i32 = len!(array);
+            let reversed: I32Array = [0; len];
+            let mut i: i32 = 0;
+            let mut j: i32 = len - 1;
+            while i < len {
+                reversed[i] = array[j];
+
+                i += 1;
+                j -= 1;
+            }
+
+            return reversed;
+        }
+
+        fn remove_trailing_zeroes_i32_array(array: I32Array) -> I32Array {
+            let len: i32 = len!(array);
+            let mut i: i32 = len - 1;
+            let mut j: i32 = 0;
+            let result: I32Array;
+
+            while array[i] == 0 {
+                i -= 1;
+                if i < 0 {
+                    break;
+                }
+            }
+
+            if i < len - 1 {
+                // at least one trailing zero
+                result = [0; i + 1];
+                while j < i + 1 {
+                    result[j] = array[j];
+                    j += 1;
+                }
+                return result;
+            }
+
+            return array;
+        }
+
+        fn expand_i32_array(array: I32Array, new_capacity: i32) -> I32Array {
+            let result: I32Array = [0; new_capacity];
+            let len: i32 = len!(array);
+            let i: i32 = 0;
+            while i < len {
+                result[i] = array[i];
+                i += 1;
+            }
+
+            return result;
+        }
+
+        fn BigIntToString(bigint: BigInt, base: i32) -> String {
+            let digits: I32Array = from_bigint_to_digits(bigint.digits, base);
+            let len: i32 = len!(digits);
+            let chars: I32Array = [0; len];
+            let mut i: i32 = 0;
+
+            while i < len {
+                chars[i] = digits[i] + 48;
+                i += 1;
+            }
+
+            let result: String = String {
+                data: chars,
+                length: len
+            };
+
+            if bigint.negative {
+                result = add_strings(create_string_from_array("-"), result);
+            }
+
+            return result;
+        }
+
+        fn from_bigint_to_digits(bigint: I32Array, base: i32) -> I32Array {
+            let mut digits: I32Array = [0; len!(bigint)];
+            let mut di: i32 = 0;
+            let mut quotient_digits: I32Array;
+            let mut carry: i32 = 0;
+            let mut i: i32;
+            let mut j: i32;
+            let mut current: i32;
+            let mut new_digit: i32;
+
+            while len!(bigint) > 0 {
+                carry = 0;
+                quotient_digits = [0; len!(bigint)];
+                i = len!(bigint) - 1;
+                j = 0;
+                while i >= 0 {
+                    current = bigint[i] + carry * 0x1000000;
+                    new_digit = current / base;
+                    carry = current % base;
+                    quotient_digits[j] = new_digit;
+                    i -= 1;
+                    j += 1;
+                }
+                quotient_digits = reverse_i32_array(quotient_digits);
+                quotient_digits = remove_trailing_zeroes_i32_array(quotient_digits);
+                bigint = quotient_digits;
+                if di == len!(digits) {
+                    digits = expand_i32_array(digits, len!(digits) * 2);
+                }
+                digits[di] = carry;
+                di += 1;
+            }
+
+            return reverse_i32_array(remove_trailing_zeroes_i32_array(digits));
         }
 
         fn number_to_string_memory(value: f64, radix: i32, offset: i32) -> i32 {
@@ -651,7 +915,6 @@ pub fn generate_module() -> WatModule {
                 return 9;
             }
 
-            // Handle zero (both positive and negative)
             if value == 0.0 || value == -0.0 {
                 memory::<i8>[current_offset] = '0';
                 return 1;
@@ -692,7 +955,7 @@ pub fn generate_module() -> WatModule {
             let mut remainder: f64;
 
             // Convert integer part to digits in reverse order
-            let mut int_digits: CharArray = [0; 64];
+            let mut int_digits: I32Array = [0; 64];
             let mut int_count: i32 = 0;
             let mut int_val: f64 = integer_part;
 
@@ -713,7 +976,7 @@ pub fn generate_module() -> WatModule {
             }
 
             // Convert fractional part to digits
-            let mut frac_digits: CharArray = [0; 20];
+            let mut frac_digits: I32Array = [0; 20];
             let mut frac_count: i32 = 0;
             let mut frac_val: f64 = fractional_part;
 
@@ -923,7 +1186,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_primitive(value: anyref) -> i32 {
-            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref);
+            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref) || ref_test!(value, BigInt);
         }
 
         fn is_object(value: anyref) -> i32 {
@@ -1144,10 +1407,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn copy_string(target: String, index_start: i32, index_end: i32) -> String {
-            let new_string_data: CharArray = [0; index_end - index_start];
+            let new_string_data: I32Array = [0; index_end - index_start];
             let i: i32 = index_start;
             let length: i32 = target.length;
-            let target_data: CharArray = target.data;
+            let target_data: I32Array = target.data;
 
             if index_end < 0 {
                 index_end = length - 1;
@@ -1183,7 +1446,7 @@ pub fn generate_module() -> WatModule {
             let mut remaining: i32 = 0;
             let mut prev: f64 = 0.0;
             let trimmed: String;
-            let data: CharArray;
+            let data: I32Array;
             let len: i32 = 0;
 
             // Implementation
@@ -1315,7 +1578,7 @@ pub fn generate_module() -> WatModule {
             return new_number(value);
         }
 
-        fn parse_non_decimal(data: CharArray, start: i32, end: i32, base: i32, sign: f64) -> anyref {
+        fn parse_non_decimal(data: I32Array, start: i32, end: i32, base: i32, sign: f64) -> anyref {
             // Variable declarations
             let mut value: f64 = 0.0;
             let mut i: i32 = start;
@@ -1360,7 +1623,7 @@ pub fn generate_module() -> WatModule {
         //     let mut j: i32 = 0;
         //     let prefix_len: i32 = prefix.length;
         //     let target_len: i32 = target.length;
-        //     let new_string_data: CharArray;
+        //     let new_string_data: I32Array;
         //
         //     while i < prefix_len && i < target.length {
         //         if prefix.data[i] != target.data[i] {
@@ -1396,10 +1659,10 @@ pub fn generate_module() -> WatModule {
 
         fn string_trim(str: String) -> String {
             let mut i: i32 = 0;
-            let old_data: CharArray = str.data;
+            let old_data: I32Array = str.data;
             let l: i32 = len!(old_data);
             let mut j: i32 = l - 1;
-            let new_data: CharArray;
+            let new_data: I32Array;
             let mut offset: i32 = 0;
 
             while i < l && (old_data[i] == 32 || (old_data[i] >= 9 && old_data[i] <= 13)) {
@@ -1432,10 +1695,22 @@ pub fn generate_module() -> WatModule {
             return create_array(0);
         }
 
+        fn String_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            // TODO: Handle calling this as a constructor
+            let arg: anyref = first_argument_or_null(arguments);
+            return ToString(arg);
+        }
+
         fn Number_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
             return ToNumber(arg);
+        }
+
+        fn BigInt_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            // TODO: Handle calling this as a constructor
+            let arg: anyref = first_argument_or_null(arguments);
+            return ToBigInt(arg);
         }
 
         fn Boolean_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1571,6 +1846,15 @@ pub fn generate_module() -> WatModule {
             return new_static_string(data!("function () { [native code] }"), 29);
         }
 
+        fn create_string_prototype() -> Object {
+            let object: Object = create_object();
+
+            set_property(object, data!("toString"),
+                create_property_function(global_scope as Scope, String_toString, null));
+
+            return object;
+        }
+
         fn create_number_prototype() -> Object {
             let object: Object = create_object();
 
@@ -1578,6 +1862,19 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, Number_toString, null));
 
             return object;
+        }
+
+        fn create_bigint_prototype() -> Object {
+            let object: Object = create_object();
+
+            set_property(object, data!("toString"),
+                create_property_function(global_scope as Scope, BigInt_toString, null));
+
+            return object;
+        }
+
+        fn String_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return this;
         }
 
         fn Number_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1591,13 +1888,24 @@ pub fn generate_module() -> WatModule {
             return NumberToString(this as Number, 10);
         }
 
+        fn BigInt_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut radix: i32 = 10;
+            let radix_maybe: anyref = first_argument_or_null(arguments);
+            if !ref_test!(radix_maybe, null) {
+                // TODO: handle NaN and other cases
+                let radix_num: Number = ToNumber(radix_maybe) as Number;
+                radix = radix_num.value as i32;
+            }
+            return BigIntToString(this as BigInt, 10);
+        }
+
         fn number_to_string_raw(number: Number) -> String {
             let written_length: i32 = writeF64AsAscii(number.value, free_memory_offset);
             return memory_to_string(free_memory_offset, written_length);
         }
 
         fn memory_to_string(offset: i32, length: i32) -> String {
-            let string_data: CharArray = [0; length];
+            let string_data: I32Array = [0; length];
 
             // TODO: technically we could read bigger values and split them into i8s
             let mut i: i32 = 0;
@@ -2151,7 +2459,7 @@ pub fn generate_module() -> WatModule {
         fn convert_static_string_to_string(value: StaticString) -> String {
             let offset: i32 = value.offset;
             let length: i32 = value.length;
-            let data: CharArray = [0; length];
+            let data: I32Array = [0; length];
 
             let i: i32 = 0;
             while i < length {
@@ -2167,7 +2475,7 @@ pub fn generate_module() -> WatModule {
 
         fn add_static_strings(ptr1: i32, len1: i32, ptr2: i32, len2: i32) -> String {
             let total_length: i32 = len1 + len2;
-            let string_data: CharArray = [0; total_length];
+            let string_data: I32Array = [0; total_length];
             let mut i: i32 = 0;
 
             // Copy first part
@@ -2198,9 +2506,9 @@ pub fn generate_module() -> WatModule {
 
         fn add_static_string_to_string(str: String, ptr: i32, len: i32) -> String {
             let str_len: i32 = str.length;
-            let string_data: CharArray = str.data;
+            let string_data: I32Array = str.data;
             let total_length: i32 = str_len + len;
-            let new_string_data: CharArray = [0; total_length];
+            let new_string_data: I32Array = [0; total_length];
 
             // TODO: replace with array.copy when implemented
             let mut i: i32 = 0;
@@ -2223,11 +2531,11 @@ pub fn generate_module() -> WatModule {
 
         fn add_string_to_static_string(static_string: StaticString, str: String) -> String {
             let str_len: i32 = str.length;
-            let string_data: CharArray = str.data;
+            let string_data: I32Array = str.data;
             let static_string_length: i32 = static_string.length;
             let static_string_offset: i32 = static_string.offset;
             let total_length: i32 = str_len + static_string_length;
-            let new_string_data: CharArray = [0; total_length];
+            let new_string_data: I32Array = [0; total_length];
 
             // TODO: replace with array.copy when implemented
             let mut i: i32 = 0;
@@ -2248,7 +2556,7 @@ pub fn generate_module() -> WatModule {
             };
         }
 
-        fn create_string_from_array(data: CharArray) -> String {
+        fn create_string_from_array(data: I32Array) -> String {
             return String {
                 data: data,
                 length: len!(data)
@@ -2706,9 +3014,6 @@ pub fn generate_module() -> WatModule {
                 return (target as GlobalThis).properties;
             } else if ref_test!(target, Array) {
                 return (target as Array).properties;
-            } else if ref_test!(target, Number) {
-                // numbers don't have their own properties, but use the Number prototype
-                return (global_number_prototype as Object).properties;
             }
 
             return null;
@@ -3109,7 +3414,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn convert_to_string(value: anyref) -> String {
-            let data: CharArray = [0; 0];
+            let data: I32Array = [0; 0];
 
             if ref_test!(value, null) {
                 data = "undefined";
@@ -3168,6 +3473,10 @@ pub fn generate_module() -> WatModule {
                     if !ref_test!(own_prototype, null) {
                         result = get_property(own_prototype, name);
                     }
+                }
+            } else {
+                if !ref_test!(own_prototype, null) {
+                    result = get_property(own_prototype, name);
                 }
             }
 
@@ -3662,8 +3971,8 @@ pub fn generate_module() -> WatModule {
 
             let length: i32 = first.length;
             let i: i32 = 0;
-            let mut first_data: CharArray;
-            let mut second_data: CharArray;
+            let mut first_data: I32Array;
+            let mut second_data: I32Array;
             while i < length {
                 first_data = first.data;
                 second_data = second.data;
@@ -3988,11 +4297,11 @@ pub fn generate_module() -> WatModule {
         fn add_strings(str1: String, str2: String) -> String {
             let str1_len: i32 = str1.length;
             let str2_len: i32 = str2.length;
-            let str1_data: CharArray = str1.data;
-            let str2_data: CharArray = str2.data;
+            let str1_data: I32Array = str1.data;
+            let str2_data: I32Array = str2.data;
 
             let total_length: i32 = str1_len + str2_len;
-            let new_string_data: CharArray = [0; total_length];
+            let new_string_data: I32Array = [0; total_length];
 
             // TODO: replace with array.copy when implemented
             let mut i: i32 = 0;
@@ -4117,8 +4426,8 @@ pub fn generate_module() -> WatModule {
             let str2: String;
             let static_str1: StaticString;
             let static_str2: StaticString;
-            let char_array1: CharArray;
-            let char_array2: CharArray;
+            let char_array1: I32Array;
+            let char_array2: I32Array;
             let offset: i32;
             let result: i32;
 
@@ -4206,7 +4515,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn compare_string_range_and_static_string(str: String, start: i32, end: i32, static_str: StaticString) -> i32 {
-            let char_array: CharArray;
+            let char_array: I32Array;
             let len: i32;
             let static_str_len: i32 = static_str.length;
             let offset: i32;
@@ -4229,7 +4538,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn compare_string_and_static_string(str: String, static_str: StaticString) -> i32 {
-            let char_array: CharArray;
+            let char_array: I32Array;
             let len: i32;
             let offset: i32;
             let mut i: i32;
@@ -4366,13 +4675,17 @@ pub fn generate_module() -> WatModule {
             } else if ref_test!(target, AsyncGenerator) {
                 return (target as AsyncGenerator).own_prototype;
             } else if ref_test!(target, Array) {
-                return (target as Array).own_prototype;
+                return global_array_prototype;
             } else if ref_test!(target, GlobalThis) {
                 return (target as GlobalThis).own_prototype;
             } else if ref_test!(target, Number) {
-                // TODO: check if that's correct. do we have to handle global_number_prototype's
-                // own prototype?
-                return null;
+                return global_number_prototype;
+            } else if ref_test!(target, BigInt) {
+                return global_bigint_prototype;
+            } else if ref_test!(target, String) {
+                return global_string_prototype;
+            } else if ref_test!(target, StaticString) {
+                return global_string_prototype;
             }
 
             return null;
@@ -4657,7 +4970,7 @@ pub fn generate_module() -> WatModule {
             let frac_part: f64 = remaining_value - int_part;
 
             // Convert integer part
-            let mut int_digits: CharArray = [0; 20];  // Max digits for f64
+            let mut int_digits: I32Array = [0; 20];  // Max digits for f64
             let mut int_count: i32 = 0;
             let mut int_val: f64 = int_part;
             let mut divided: f64;
@@ -4754,7 +5067,7 @@ pub fn generate_module() -> WatModule {
             let mut str_len: i32 = 0;
             let mut str_utf8_len: i32 = 0;
             let mut j: i32;
-            let mut str_data: CharArray;
+            let mut str_data: I32Array;
 
             let mut i: i32 = 0;
             while i < len {
@@ -4803,6 +5116,11 @@ pub fn generate_module() -> WatModule {
                         iovectors_offset += 8;
                         handled = 1;
                     }
+                }
+
+                if ref_test!(current, BigInt) {
+                    current = BigIntToString(current as BigInt, 10);
+                    current = add_strings(current as String, create_string_from_array("n"));
                 }
 
                 // Handle Number
@@ -5052,7 +5370,7 @@ pub fn generate_module() -> WatModule {
             let mut i: i32 = 0;
             let mut j: i32;
             let result: String;
-            let data: CharArray;
+            let data: I32Array;
 
             offset += 4;
 
@@ -5124,7 +5442,7 @@ pub fn generate_module() -> WatModule {
             return 0;
         }
 
-        fn get_data_offset_str(str: CharArray) -> i32 {
+        fn get_data_offset_str(str: I32Array) -> i32 {
             let mut offset: i32 = data_offsets_offset;
             let length: i32 = memory[offset];
             let mut i: i32 = 0;
@@ -5211,6 +5529,8 @@ pub fn generate_module() -> WatModule {
             let array_constructor: Function = new_function(global_scope as Scope, Array_constructor, null);
             let symbol_constructor: Function = new_function(global_scope as Scope, Symbol_constructor, null);
             let number_constructor: Function = new_function(global_scope as Scope, Number_constructor, null);
+            let string_constructor: Function = new_function(global_scope as Scope, String_constructor, null);
+            let bigint_constructor: Function = new_function(global_scope as Scope, BigInt_constructor, null);
             let boolean_constructor: Function = new_function(global_scope as Scope, Boolean_constructor, null);
             let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
             let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
@@ -5224,12 +5544,16 @@ pub fn generate_module() -> WatModule {
             global_array_prototype = create_array_prototype();
             global_function_prototype = create_function_prototype();
             global_number_prototype = create_number_prototype();
+            global_string_prototype = create_string_prototype();
+            global_bigint_prototype = create_bigint_prototype();
             global_symbol_prototype = create_symbol_prototype(symbol_constructor);
 
             set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
             set_property(async_generator_constructor, data!("prototype"), create_bare_property(async_generator_prototype));
             set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
             set_property(array_constructor, data!("prototype"), create_bare_property(global_array_prototype));
+            set_property(number_constructor, data!("prototype"), create_bare_property(global_number_prototype));
+            set_property(string_constructor, data!("prototype"), create_bare_property(global_string_prototype));
             set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
             set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));
             set_property(symbol_constructor, data!("asyncIterator"), create_bare_property(symbol_async_iterator));
@@ -5252,6 +5576,8 @@ pub fn generate_module() -> WatModule {
             declare_variable(global_scope as Scope, data!("Error"), error_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Array"), array_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Number"), number_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("String"), string_constructor, VARIABLE_CONST);
+            declare_variable(global_scope as Scope, data!("BigInt"), bigint_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Boolean"), boolean_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Symbol"), symbol_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("ReferenceError"), reference_error_constructor, VARIABLE_CONST);
