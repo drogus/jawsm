@@ -1675,7 +1675,10 @@ pub fn generate_module() -> WatModule {
             let new_data: I32Array;
             let mut offset: i32 = 0;
 
-            while i < l && (old_data[i] == 32 || (old_data[i] >= 9 && old_data[i] <= 13)) {
+            while i < l {
+                if old_data[i] != 32 && (old_data[i] < 9 || old_data[i] > 13) {
+                    break;
+                }
                 i += 1;
             }
 
