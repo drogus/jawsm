@@ -462,6 +462,9 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Object_constructor, null));
 
+            set_property(object, data!("hasOwnProperty"),
+                create_property_function(global_scope as Scope, Object_hasOwnProperty, null));
+
             object.own_prototype = null;
             return object;
         }
@@ -505,6 +508,9 @@ pub fn generate_module() -> WatModule {
 
             set_property(constructor, data!("defineProperty"),
                 create_property_function(global_scope as Scope, Object_defineProperty, null));
+
+            set_property(constructor, data!("defineProperties"),
+                create_property_function(global_scope as Scope, Object_defineProperties, null));
         }
 
         fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1052,6 +1058,33 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
+        fn Object_hasOwnProperty(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let value: anyref = this;
+            let result: i31ref;
+            let property: Nullable<Property>;
+
+            if is_primitive(value) {
+                result = 0 as i31ref;
+                return result;
+            }
+
+            let prop_name: anyref = first_argument_or_null(arguments);
+
+            if ref_test!(prop_name, Symbol) {
+                property = get_own_property_sym(value, prop_name as Symbol);
+            } else {
+                property = get_own_property_str(value, ToString(prop_name));
+            }
+
+            if ref_test!(property, null) {
+                result = 0 as i31ref;
+                return result;
+            }
+
+            result = 1 as i31ref;
+            return result;
+        }
+
         fn create_error(constructor_offset: i32, message: String) -> Object {
             let constructor: Function = get_variable(global_scope as Scope, constructor_offset) as Function;
             let new_instance: Object = create_object();
@@ -1061,6 +1094,35 @@ pub fn generate_module() -> WatModule {
             set_property_value(new_instance, data!("constructor"), constructor);
 
             return new_instance;
+        }
+
+        fn Object_defineProperties(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let object: anyref = first_argument_or_null(arguments);
+            let properties: anyref = second_argument_or_null(arguments);
+
+            if is_primitive(object) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Object.defineProperties called on non-object")));
+            }
+
+            let property_map_maybe: Nullable<PropertyMap> = get_propertymap(properties);
+
+            if ref_test!(property_map_maybe, null) {
+                return object;
+            }
+
+            let property_map: PropertyMap = property_map_maybe as PropertyMap;
+            let size: i32 = property_map.size;
+            let mut i: i32 = 0;
+            let mut entry: Nullable<PropertyMapEntry>;
+            let entries: PropertyEntriesArray = property_map.entries;
+
+            while i < size {
+                entry = entries[i] as PropertyMapEntry;
+                Object_defineProperty(scope, this, create_arguments_3(object, get_property_name(property_map as PropertyMap, entry.key), get_value_of_property(entry.value, properties)), null);
+                i += 1;
+            }
+
+            return object;
         }
 
         fn Object_defineProperty(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1182,11 +1244,11 @@ pub fn generate_module() -> WatModule {
                 }
             }
 
-        return 1;
+            return 1;
         }
 
         fn is_primitive(value: anyref) -> i32 {
-            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref) || ref_test!(value, BigInt);
+            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref) || ref_test!(value, BigInt) || ref_test!(value, null);
         }
 
         fn is_object(value: anyref) -> i32 {
@@ -2320,6 +2382,14 @@ pub fn generate_module() -> WatModule {
             return null;
         }
 
+        fn second_argument_or_null(arguments: JSArgs) -> anyref {
+            if len!(arguments) > 1 {
+                return arguments[1];
+            }
+
+            return null;
+        }
+
         fn return_custom_generator_callback(callback: Function, return_value: anyref) -> anyref {
             let result: GeneratorResult = GeneratorResult {
                 next_callback: callback,
@@ -2425,6 +2495,14 @@ pub fn generate_module() -> WatModule {
             let arguments: JSArgs = [null; 2];
             arguments[0] = arg1;
             arguments[1] = arg2;
+            return arguments;
+        }
+
+        fn create_arguments_3(arg1: anyref, arg2: anyref, arg3: anyref) -> JSArgs {
+            let arguments: JSArgs = [null; 3];
+            arguments[0] = arg1;
+            arguments[1] = arg2;
+            arguments[2] = arg3;
             return arguments;
         }
 
