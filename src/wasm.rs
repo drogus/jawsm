@@ -168,6 +168,7 @@ pub fn generate_module() -> WatModule {
         struct Object {
             properties: mut PropertyMap,
             own_prototype: mut anyref,
+            value: mut anyref,
         }
 
         struct GlobalThis {
@@ -273,6 +274,7 @@ pub fn generate_module() -> WatModule {
         static mut global_array_prototype: Nullable<Object> = null;
         static mut global_function_prototype: Nullable<Object> = null;
         static mut global_number_prototype: Nullable<Object> = null;
+        static mut global_boolean_prototype: Nullable<Object> = null;
         static mut global_string_prototype: Nullable<Object> = null;
         static mut global_bigint_prototype: Nullable<Object> = null;
         static mut global_symbol_prototype: Nullable<Object> = null;
@@ -464,6 +466,9 @@ pub fn generate_module() -> WatModule {
 
             set_property(object, data!("hasOwnProperty"),
                 create_property_function(global_scope as Scope, Object_hasOwnProperty, null));
+
+            set_property(object, data!("valueOf"),
+                create_property_function(global_scope as Scope, Object_valueOf, null));
 
             object.own_prototype = null;
             return object;
@@ -1771,15 +1776,42 @@ pub fn generate_module() -> WatModule {
         }
 
         fn String_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
-            return ToString(arg);
+            let str: String = ToString(arg);
+
+            if is_new_target(meta) {
+                // TODO: et constructor
+                let obj: Object = create_object();
+                obj.own_prototype = global_string_prototype;
+                obj.value = str;
+                set_property_value(obj, data!("constructor"), get_variable(global_scope as Scope, data!("String")));
+                return obj;
+            }
+
+            return str;
+        }
+
+        fn is_new_target(meta: anyref) -> i32 {
+            if ref_test!(meta, null) {
+                return 0;
+            }
+
+            return !ref_test!((meta as FunctionMetadata).new_target, null);
         }
 
         fn Number_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
-            return ToNumber(arg);
+            let num: anyref = ToNumber(arg);
+
+            if is_new_target(meta) {
+                let obj: Object = create_object();
+                obj.own_prototype = global_number_prototype;
+                obj.value = num;
+                set_property_value(obj, data!("constructor"), get_variable(global_scope as Scope, data!("Number")));
+                return obj;
+            }
+
+            return num;
         }
 
         fn BigInt_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1789,9 +1821,18 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Boolean_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            // TODO: Handle calling this as a constructor
             let arg: anyref = first_argument_or_null(arguments);
-            return ToBoolean(arg);
+            let num: anyref = ToBoolean(arg);
+
+            if is_new_target(meta) {
+                let obj: Object = create_object();
+                obj.own_prototype = global_boolean_prototype;
+                obj.value = num;
+                set_property_value(obj, data!("constructor"), get_variable(global_scope as Scope, data!("Boolean")));
+                return obj;
+            }
+
+            return num;
         }
 
         fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1927,6 +1968,21 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, String_toString, null));
 
+            set_property(object, data!("valueOf"),
+                create_property_function(global_scope as Scope, String_valueOf, null));
+
+            return object;
+        }
+
+        fn create_boolean_prototype() -> Object {
+            let object: Object = create_object();
+
+            set_property(object, data!("toString"),
+                create_property_function(global_scope as Scope, Boolean_toString, null));
+
+            set_property(object, data!("valueOf"),
+                create_property_function(global_scope as Scope, Boolean_valueOf, null));
+
             return object;
         }
 
@@ -1952,7 +2008,66 @@ pub fn generate_module() -> WatModule {
         }
 
         fn String_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            if ref_test!(this, String) || ref_test!(this, StaticString) {
+                return this;
+            }
+
+            if ref_test!(this, Object) {
+                return ToString((this as Object).value);
+            }
+
+            return null;
+        }
+
+        fn String_valueOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            if ref_test!(this, Object) {
+                if !ref_test!((this as Object).value, null) {
+                    return (this as Object).value;
+                }
+            }
+
             return this;
+        }
+
+        fn Object_valueOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            if ref_test!(this, Object) {
+                if !ref_test!((this as Object).value, null) {
+                    return (this as Object).value;
+                }
+            }
+            return this;
+        }
+
+        fn Boolean_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut value: anyref = first_argument_or_null(arguments);
+
+            if ref_test!(value, Object) {
+                value = (value as Object).value;
+            }
+
+            if !is_boolean(value) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Boolean.prototype.toString requires that 'this' be a Boolean")));
+            }
+
+            if (value as i31ref) == 0 {
+                return new_static_string(data!("false"), 5);
+            }
+
+            return new_static_string(data!("true"), 4);
+        }
+
+        fn Boolean_valueOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut value: anyref = first_argument_or_null(arguments);
+
+            if ref_test!(value, Object) {
+                value = (value as Object).value;
+            }
+
+            if !is_boolean(value) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Boolean.prototype.valueOf requires that 'this' be a Boolean")));
+            }
+
+            return value;
         }
 
         fn Number_valueOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1960,6 +2075,16 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Number_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut value: anyref = first_argument_or_null(arguments);
+
+            if ref_test!(value, Object) {
+                value = (value as Object).value;
+            }
+
+            if !ref_test!(value, Number) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Number.prototype.toString requires that 'this' be a Number")));
+            }
+
             let mut radix: i32 = 10;
             let radix_maybe: anyref = first_argument_or_null(arguments);
             if !ref_test!(radix_maybe, null) {
@@ -1967,7 +2092,7 @@ pub fn generate_module() -> WatModule {
                 let radix_num: Number = ToNumber(radix_maybe) as Number;
                 radix = radix_num.value as i32;
             }
-            return NumberToString(this as Number, 10);
+            return NumberToString(value as Number, 10);
         }
 
         fn BigInt_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -2795,6 +2920,7 @@ pub fn generate_module() -> WatModule {
             return Object {
                 properties: create_propertymap(),
                 own_prototype: global_object_prototype,
+                value: null,
                 // interned: create_intern_map(),
             };
         }
@@ -3678,7 +3804,8 @@ pub fn generate_module() -> WatModule {
                 object = target as Object;
                 return Object {
                     properties: clone_propertymap(object.properties),
-                    own_prototype: object.own_prototype
+                    own_prototype: object.own_prototype,
+                    value: object.value
                 };
             } else if ref_test!(target, Function) {
                 function = target as Function;
@@ -4695,6 +4822,13 @@ pub fn generate_module() -> WatModule {
             return 0;
         }
 
+        fn is_boolean(value: anyref) -> i32 {
+            if ref_test!(value, i31ref) {
+                return (value as i31ref) == 0 || (value as i31ref) == 1;
+            }
+            return 0;
+        }
+
         fn is_true(arg: anyref) -> i32 {
             if ref_test!(arg, null) {
                 return 0;
@@ -5668,6 +5802,7 @@ pub fn generate_module() -> WatModule {
             global_array_prototype = create_array_prototype();
             global_function_prototype = create_function_prototype();
             global_number_prototype = create_number_prototype();
+            global_boolean_prototype = create_boolean_prototype();
             global_string_prototype = create_string_prototype();
             global_bigint_prototype = create_bigint_prototype();
             global_symbol_prototype = create_symbol_prototype(symbol_constructor);
@@ -5677,6 +5812,7 @@ pub fn generate_module() -> WatModule {
             set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
             set_property(array_constructor, data!("prototype"), create_bare_property(global_array_prototype));
             set_property(number_constructor, data!("prototype"), create_bare_property(global_number_prototype));
+            set_property(boolean_constructor, data!("prototype"), create_bare_property(global_boolean_prototype));
             set_property(string_constructor, data!("prototype"), create_bare_property(global_string_prototype));
             set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
             set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));

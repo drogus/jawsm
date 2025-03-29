@@ -1014,8 +1014,11 @@ impl WasmTranslator {
     fn translate_identifier(&mut self, identifier: &Identifier) -> InstructionsList {
         let offset = self.add_identifier(identifier);
 
-        if identifier.to_interned_string(&self.interner) == "undefined" {
+        let s = identifier.to_interned_string(&self.interner);
+        if s == "undefined" {
             vec![W::ref_null_any()]
+        } else if s == "NaN" {
+            vec![W::F64Nan, W::call("$new_number")]
         } else {
             vec![
                 W::local_get("$scope"),
