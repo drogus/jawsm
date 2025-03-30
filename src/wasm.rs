@@ -1257,7 +1257,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_object(value: anyref) -> i32 {
-            if ref_test!(value, Object) || ref_test!(value, Promise) || ref_test!(value, Array) {
+            if ref_test!(value, Object) || ref_test!(value, Promise) || ref_test!(value, Array) || ref_test!(value, AsyncGenerator) || ref_test!(value, Generator) {
                 return 1;
             }
 
@@ -4686,6 +4686,10 @@ pub fn generate_module() -> WatModule {
                 return 1 as i31ref;
             }
 
+            if ref_test!(arg1, Symbol) || ref_test!(arg2, Symbol) {
+                return (arg1 as Symbol == arg2 as Symbol) as i31ref;
+            }
+
             if ref_test!(arg1, null) || ref_test!(arg2, null) {
                 return 0 as i31ref;
             }
@@ -4880,25 +4884,31 @@ pub fn generate_module() -> WatModule {
                 return 1 as i31ref;
             }
 
-            // TODO: this is wrong, it should be a string converted to a number
             if ref_test!(arg1, Number) && is_a_string(arg2) {
-                return strict_equal(number_to_string_raw(arg1 as Number), arg2);
+                return loose_equal(arg1, ToNumber(arg2));
             }
 
             if is_a_string(arg1) && ref_test!(arg2, Number) {
-                return strict_equal(arg1, number_to_string_raw(arg2 as Number));
+                return loose_equal(ToNumber(arg1), arg2);
             }
 
-            // TODO: implement the rest of the cases
-            // if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-            //     let num1: Number = arg1 as Number;
-            //     let num2: Number = arg2 as Number;
-            //     return (num1.value == num2.value) as i31ref;
-            // }
-            //
-            // if ref_test!(arg1, i31ref) && ref_test!(arg2, i31ref) {
-            //     return 1 as i31ref;
-            // }
+            if is_boolean(arg1) {
+                return loose_equal(ToNumber(arg1), arg2);
+            }
+
+            if is_boolean(arg2) {
+                return loose_equal(arg1, ToNumber(arg2));
+            }
+
+            if (is_a_string(arg1) || ref_test!(arg1, Number) || ref_test!(arg1, Symbol) || ref_test!(arg1, BigInt)) && !is_primitive(arg2) {
+                return loose_equal(arg1, ToPrimitive(arg2, 0));
+            }
+
+            if !is_primitive(arg1) && (is_a_string(arg2) || ref_test!(arg2, Number) || ref_test!(arg2, Symbol) || ref_test!(arg2, BigInt)) {
+                return loose_equal(ToPrimitive(arg1, 0), arg2);
+            }
+
+            // TODO handle numbers + bigints
 
             return 0 as i31ref;
         }
