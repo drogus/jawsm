@@ -1437,6 +1437,16 @@ pub fn generate_module() -> WatModule {
                     result = 0 as i31ref;
                     return result;
                 }
+            } else if ref_test!(value, String) {
+                if (value as String).length == 0 {
+                    result = 0 as i31ref;
+                    return result;
+                }
+            } else if ref_test!(value, StaticString) {
+                if (value as StaticString).length == 0 {
+                    result = 0 as i31ref;
+                    return result;
+                }
             }
 
             result = 1 as i31ref;
