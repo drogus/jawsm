@@ -1059,7 +1059,23 @@ pub fn generate_module() -> WatModule {
 
         fn Object_create(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let object: Object = create_object();
-            object.own_prototype = arguments[0];
+
+            if len!(arguments) == 0 {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Object.create: At least 1 argument required, but only 0 passed")));
+            }
+
+            let prototype: anyref = arguments[0];
+
+            if !is_null(prototype) && !is_object(prototype) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Object.create: first argument has to be either null or an object")));
+            }
+
+            object.own_prototype = prototype;
+
+            let properties: anyref = second_argument_or_null(arguments);
+
+            Object_defineProperties(scope, null, create_arguments_2(object, properties), null);
+
             return object;
         }
 
