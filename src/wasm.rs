@@ -45,6 +45,7 @@ pub fn generate_module() -> WatModule {
         // this is needed in the long run, but I decided to declare and use it for now,
         // and see how it goes
         static PROPERTY_IS_PRIVATE: i32   = 0b00100000;
+        static PROPERTY_ANY: i32   = 0b11111111;
 
         static mut global_strict_mode: i32 = 0;
 
@@ -516,6 +517,9 @@ pub fn generate_module() -> WatModule {
 
             set_property(constructor, data!("defineProperties"),
                 create_property_function(global_scope as Scope, Object_defineProperties, null));
+
+            set_property(constructor, data!("getOwnPropertyNames"),
+                create_property_function(global_scope as Scope, Object_getOwnPropertyNames, null));
         }
 
         fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1077,6 +1081,20 @@ pub fn generate_module() -> WatModule {
             Object_defineProperties(scope, null, create_arguments_2(object, properties), null);
 
             return object;
+        }
+
+        fn Object_getOwnPropertyNames(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let strings: StringArray = get_own_property_names(first_argument_or_null(arguments));
+            let result: Array = create_array(len!(strings));
+            let result_array: AnyrefArray = result.array;
+            let length: i32 = len!(strings);
+            let mut i: i32 = 0;
+            while i < length {
+                result_array[i] = strings[i];
+                i+=1;
+            }
+
+            return result;
         }
 
         fn Object_hasOwnProperty(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -3260,6 +3278,18 @@ pub fn generate_module() -> WatModule {
         }
 
         fn get_enumerable_property_names(target: anyref) -> StringArray {
+            return get_property_names(target, 0, PROPERTY_ENUMERABLE);
+        }
+
+        fn get_own_enumerable_property_names(target: anyref) -> StringArray {
+            return get_property_names(target, 1, PROPERTY_ENUMERABLE);
+        }
+
+        fn get_own_property_names(target: anyref) -> StringArray {
+            return get_property_names(target, 1, 0);
+        }
+
+        fn get_property_names(target: anyref, own: i32, flags: i32) -> StringArray {
             let mut maybe_propertymap: Nullable<PropertyMap> = get_propertymap(target);
             if ref_test!(maybe_propertymap, null) {
                 return [];
@@ -3285,7 +3315,7 @@ pub fn generate_module() -> WatModule {
 
                 if !ref_test!(maybe_propertymap_entry, null) {
                     property = (maybe_propertymap_entry as PropertyMapEntry).value;
-                    if property.flags & PROPERTY_ENUMERABLE != 0 {
+                    if flags == 0 || property.flags & flags != 0 {
                         count += 1;
                     }
                 }
@@ -3294,11 +3324,13 @@ pub fn generate_module() -> WatModule {
 
             let own_prototype: anyref = get_own_prototype(target);
             let mut proto_names: StringArray = [null; 0];
-            if ref_test!(own_prototype, null) {
-                proto_names = [null; 0];
-            } else {
-                proto_names = get_enumerable_property_names(own_prototype);
-                count += len!(proto_names);
+            if !own {
+                if ref_test!(own_prototype, null) {
+                    proto_names = [null; 0];
+                } else {
+                    proto_names = get_enumerable_property_names(own_prototype);
+                    count += len!(proto_names);
+                }
             }
 
             let names: StringArray = [null; count];
@@ -3310,7 +3342,7 @@ pub fn generate_module() -> WatModule {
                 if !ref_test!(maybe_propertymap_entry, null) {
                     propertymap_entry = maybe_propertymap_entry as PropertyMapEntry;
                     property = propertymap_entry.value;
-                    if property.flags & PROPERTY_ENUMERABLE != 0 {
+                    if flags == 0 || property.flags & flags != 0 {
                         names[j] = get_property_name(propertymap, propertymap_entry.key);
 
                         j += 1;
