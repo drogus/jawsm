@@ -3190,6 +3190,7 @@ impl WasmTranslator {
             W::call("$extract_parent_scope"),
             W::local_set("$scope"),
             ..condition,
+            W::call("$ToBoolean"),
             W::call("$cast_ref_to_i32_bool"),
             W::i32_eqz(),
             W::br_if(&current_loop_break_name),
@@ -3216,6 +3217,7 @@ impl WasmTranslator {
         let condition = self.translate_expression(while_loop.condition(), true);
         let block_instructions = vec![
             ..condition,
+            W::call("$ToBoolean"),
             W::call("$cast_ref_to_i32_bool"),
             W::i32_eqz(),
             W::br_if(&current_loop_break_name),
