@@ -4697,7 +4697,7 @@ pub fn generate_module() -> WatModule {
             }
 
             if ref_test!(arg1, i31ref) && ref_test!(arg2, i31ref) {
-                return 1 as i31ref;
+                return ((arg1 as i31ref) == (arg2 as i31ref)) as i31ref;
             }
 
             if ref_test!(arg1, String) && ref_test!(arg2, String) {
