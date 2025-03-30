@@ -708,6 +708,7 @@ pub fn generate_module() -> WatModule {
             result = [0; str_len - i];
             while i < str_len {
                 result[i - digits_start] = str_data[i];
+                i += 1;
             }
 
             return bigint_from_digits(result, base, negative);
