@@ -579,7 +579,7 @@ pub fn generate_module() -> WatModule {
                     }
 
                     if i != length - 1 {
-                        str_data[k] = ',';
+                        new_data[k] = ',';
                         k += 1;
                     }
 
@@ -5419,70 +5419,10 @@ pub fn generate_module() -> WatModule {
                 current = arguments[i];
                 handled = 0;
 
-                // Handle undefined
-                if ref_test!(current, null) {
-                    memory[iovectors_offset] = data!("undefined");
-                    memory[iovectors_offset + 4] = 18;
-                    iovectors_offset += 8;
-                    handled = 1;
-                }
-
-                // Handle i31ref (null, boolean, number)
-                if ref_test!(current, null) == 0 && ref_test!(current, i31ref) {
-                    val = current as i31ref as i32;
-                    if val == 0 {
-                        memory[iovectors_offset] = data!("false");
-                        memory[iovectors_offset + 4] = 10;
-                        iovectors_offset += 8;
-                        handled = 1;
-                    } else if val == 1 {
-                        memory[iovectors_offset] = data!("true");
-                        memory[iovectors_offset + 4] = 8;
-                        iovectors_offset += 8;
-                        handled = 1;
-                    } else if val == 2 {
-                        memory[iovectors_offset] = data!("null");
-                        memory[iovectors_offset + 4] = 8;
-                        iovectors_offset += 8;
-                        handled = 1;
-                    } else if val == 3 {
-                        memory[iovectors_offset] = data!("empty");
-                        memory[iovectors_offset + 4] = 10;
-                        iovectors_offset += 8;
-                        handled = 1;
-                    } else {
-                        num_val = val as f64;
-                        written_length = writeF64AsAscii(num_val, offset);
-
-                        memory[iovectors_offset] = offset;
-                        memory[iovectors_offset + 4] = written_length;
-
-                        offset += written_length;
-                        iovectors_offset += 8;
-                        handled = 1;
-                    }
-                }
-
                 if ref_test!(current, BigInt) {
                     current = BigIntToString(current as BigInt, 10);
                     current = add_strings(current as String, create_string_from_array("n"));
-                }
-
-                // Handle Number
-                if ref_test!(current, Number) {
-                    number = current as Number;
-                    written_length = writeF64AsAscii(number.value, offset);
-
-                    memory[iovectors_offset] = offset;
-                    memory[iovectors_offset + 4] = written_length;
-
-                    offset += written_length;
-                    iovectors_offset += 8;
-                    handled = 1;
-                }
-
-                // Handle StaticString
-                if ref_test!(current, StaticString) {
+                } else if ref_test!(current, StaticString) {
                     static_str = current as StaticString;
                     str_utf8_len = utf16le_to_utf8(static_str.offset, static_str.length * 2, offset + static_str.length * 2);
                     memory[iovectors_offset] = offset + static_str.length * 2;
@@ -5491,11 +5431,8 @@ pub fn generate_module() -> WatModule {
                     offset += static_str.length * 2 + str_utf8_len;
                     iovectors_offset += 8;
                     handled = 1;
-                }
-
-                // Handle String
-                if ref_test!(current, String) {
-                    str = current as String;
+                } else {
+                    str = ToString(current);
                     str_len = str.length;
 
                     // Copy string data to memory
