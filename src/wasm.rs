@@ -520,6 +520,9 @@ pub fn generate_module() -> WatModule {
 
             set_property(constructor, data!("getOwnPropertyNames"),
                 create_property_function(global_scope as Scope, Object_getOwnPropertyNames, null));
+
+            set_property(constructor, data!("keys"),
+                create_property_function(global_scope as Scope, Object_keys, null));
         }
 
         fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1084,7 +1087,22 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
+        fn Object_keys(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let strings: StringArray = get_own_property_names(first_argument_or_null(arguments));
+            let result: Array = create_array(len!(strings));
+            let result_array: AnyrefArray = result.array;
+            let length: i32 = len!(strings);
+            let mut i: i32 = 0;
+            while i < length {
+                result_array[i] = strings[i];
+                i+=1;
+            }
+
+            return result;
+        }
+
         fn Object_getOwnPropertyNames(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            // right now it's the same as Object.keys(), but it should differ for arrays
             let strings: StringArray = get_own_property_names(first_argument_or_null(arguments));
             let result: Array = create_array(len!(strings));
             let result_array: AnyrefArray = result.array;
