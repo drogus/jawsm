@@ -74,7 +74,10 @@ pub fn generate_module() -> WatModule {
             current_offset: mut i32,
         }
 
-        struct Symbol {}
+        struct Symbol {
+            description: Nullable<String>
+        }
+
         struct SymbolsMapEntry {
             key: String,
             symbol: Symbol
@@ -286,9 +289,19 @@ pub fn generate_module() -> WatModule {
             entries: [null; 10],
             length: 0
         };
-        static symbol_iterator: Symbol = Symbol {};
-        static symbol_async_iterator: Symbol = Symbol {};
-        static symbol_to_primitive: Symbol = Symbol {};
+        static mut symbol_iterator: Nullable<Symbol> = null;
+        static mut symbol_async_iterator: Nullable<Symbol> = null;
+        static mut symbol_to_primitive: Nullable<Symbol> = null;
+        static mut symbol_has_instance: Nullable<Symbol> = null;
+        static mut symbol_is_concat_spreadable: Nullable<Symbol> = null;
+        static mut symbol_match: Nullable<Symbol> = null;
+        static mut symbol_match_all: Nullable<Symbol> = null;
+        static mut symbol_replace: Nullable<Symbol> = null;
+        static mut symbol_search: Nullable<Symbol> = null;
+        static mut symbol_species: Nullable<Symbol> = null;
+        static mut symbol_split: Nullable<Symbol> = null;
+        static mut symbol_to_string_tag: Nullable<Symbol> = null;
+        static mut symbol_unscopables: Nullable<Symbol> = null;
         static mut thenables: Thenables = [null; 5];
 
         // Memory management functions required by the Component Model
@@ -383,7 +396,7 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("next"),
                 create_property_function(global_scope as Scope, Generator_next, null));
 
-            set_property_sym(object, symbol_iterator,
+            set_property_sym(object, symbol_iterator as Symbol,
                 create_property_function(global_scope as Scope, Generator_iterator, null));
 
             set_property(object, data!("constructor"),
@@ -496,13 +509,52 @@ pub fn generate_module() -> WatModule {
             return object;
         }
 
+        fn create_known_symbols() {
+            symbol_iterator = Symbol { description: create_string_from_array("Symbol.iterator") };
+            symbol_async_iterator = Symbol { description: create_string_from_array("Symbol.asyncIterator") };
+            symbol_to_primitive = Symbol { description: create_string_from_array("Symbol.toPrimitive") };
+            symbol_has_instance = Symbol { description: create_string_from_array("Symbol.hasInstance") };
+            symbol_is_concat_spreadable = Symbol { description: create_string_from_array("Symbol.isConcatSpreadable") };
+            symbol_match = Symbol { description: create_string_from_array("Symbol.match") };
+            symbol_match_all = Symbol { description: create_string_from_array("Symbol.matchAll") };
+            symbol_replace = Symbol { description: create_string_from_array("Symbol.replace") };
+            symbol_search = Symbol { description: create_string_from_array("Symbol.search") };
+            symbol_species = Symbol { description: create_string_from_array("Symbol.species") };
+            symbol_split = Symbol { description: create_string_from_array("Symbol.split") };
+            symbol_to_string_tag = Symbol { description: create_string_from_array("Symbol.toStringTag") };
+            symbol_unscopables = Symbol { description: create_string_from_array("Symbol.unscopables") };
+        }
+
         fn create_symbol_prototype(constructor: Function) -> Object {
             let object: Object = create_object();
 
             set_property(object, data!("constructor"), create_bare_property(constructor));
 
+            set_property(object, data!("toString"),
+                create_property_function(global_scope as Scope, Symbol_toString, null));
+
+            set_property(object, data!("valueOf"),
+                create_property_function(global_scope as Scope, Symbol_valueOf, null));
+
             object.own_prototype = global_object_prototype as Object;
             return object;
+        }
+
+        fn setup_symbol_constructor(symbol_constructor: Function) {
+            create_known_symbols();
+            set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
+            set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));
+            set_property(symbol_constructor, data!("asyncIterator"), create_bare_property(symbol_async_iterator));
+            set_property(symbol_constructor, data!("toPrimitive"), create_bare_property(symbol_to_primitive));
+            set_property(symbol_constructor, data!("hasInstance"), create_bare_property(symbol_has_instance));
+            set_property(symbol_constructor, data!("isConcatSpreadable"), create_bare_property(symbol_is_concat_spreadable));
+            set_property(symbol_constructor, data!("matchAll"), create_bare_property(symbol_match_all));
+            set_property(symbol_constructor, data!("replace"), create_bare_property(symbol_replace));
+            set_property(symbol_constructor, data!("search"), create_bare_property(symbol_search));
+            set_property(symbol_constructor, data!("species"), create_bare_property(symbol_species));
+            set_property(symbol_constructor, data!("split"), create_bare_property(symbol_split));
+            set_property(symbol_constructor, data!("toStringTag"), create_bare_property(symbol_to_string_tag));
+            set_property(symbol_constructor, data!("unscopables"), create_bare_property(symbol_unscopables));
         }
 
         fn setup_object_constructor(constructor: Function) {
@@ -532,6 +584,9 @@ pub fn generate_module() -> WatModule {
         fn Object_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return new_static_string(data!("[object Object]"), 15);
         }
+
+        //fn Array_join(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+        //}
 
         fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             if ref_test!(this, Array) {
@@ -1319,7 +1374,7 @@ pub fn generate_module() -> WatModule {
 
         fn get_iterator(target: anyref) -> anyref {
             // TODO: handle lack of iterator or iterator not being a function
-            let iterator_func: Function = get_property_value_sym(target, symbol_iterator) as Function;
+            let iterator_func: Function = get_property_value_sym(target, symbol_iterator as Symbol) as Function;
             return call_function(iterator_func, null, create_arguments_0(), null);
         }
 
@@ -1401,8 +1456,33 @@ pub fn generate_module() -> WatModule {
             return ToNumber(result);
         }
 
+        fn ToObject(target: anyref) -> anyref {
+            if is_null_or_undefined(target) {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Cannot convert null nor undefined to an object"));
+                throw!(JSException, error);
+            }
+
+            if is_boolean(target) {
+                return Boolean_constructor(global_scope as Scope, null, create_arguments_1(target), FunctionMetadata { new_target: get_variable(global_scope as Scope, data!("Boolean")) } );
+            }
+
+            if ref_test!(target, Number) {
+                return Number_constructor(global_scope as Scope, null, create_arguments_1(target), FunctionMetadata { new_target: get_variable(global_scope as Scope, data!("Number")) } );
+            }
+
+            if ref_test!(target, String) {
+                return String_constructor(global_scope as Scope, null, create_arguments_1(target), FunctionMetadata { new_target: get_variable(global_scope as Scope, data!("String")) } );
+            }
+
+            if ref_test!(target, Symbol) {
+                // TODO: create symbol object
+            }
+
+            return target;
+        }
+
         fn ToPrimitive(target: anyref, desired_type: i32) -> anyref {
-            let to_primitive_maybe: anyref = get_property_value_sym(target, symbol_to_primitive);
+            let to_primitive_maybe: anyref = get_property_value_sym(target, symbol_to_primitive as Symbol);
             let hint: StaticString = new_static_string(0, 0);
             let result: anyref;
 
@@ -1899,19 +1979,25 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Symbol_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            return Symbol {};
+            let description: String = ToString(first_argument_or_null(arguments));
+            let symbol: Symbol = Symbol { description: description };
+
+            if is_new_target(meta) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Symbol is not a constructor")));
+            }
+
+            return symbol;
         }
 
         fn Object_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            if len!(arguments) > 0 {
-                if is_null_or_undefined(arguments[1]) {
-                    return create_object();
-                } else if is_object(arguments[1]) {
-                    return arguments[1];
-                } else {
-                    // TODO: Implement
-                    throw!(JSException, create_string_from_array("Object constructor - a non object argument: not implemented"));
-                }
+            let value: anyref = first_argument_or_null(arguments);
+
+            if is_null_or_undefined(value) {
+                return create_object();
+            } else if is_object(value) {
+                return value;
+            } else {
+                return ToObject(value);
             }
 
             return create_object();
@@ -2068,6 +2154,40 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, BigInt_toString, null));
 
             return object;
+        }
+
+        fn Symbol_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut value: anyref = first_argument_or_null(arguments);
+
+            if ref_test!(value, Object) {
+                value = (value as Object).value;
+            }
+
+            if !ref_test!(value, Symbol) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Symbol.prototype.toString requires that 'this' be a Symbol")));
+            }
+
+            let description: String = create_empty_string();
+            let symbol: Symbol = value as Symbol;
+            if !ref_test!(symbol.description, null) {
+                description = symbol.description as String;
+            }
+
+            return add_strings(add_strings(create_string_from_array("Symbol("), description), create_string_from_array(")"));
+        }
+
+        fn Symbol_valueOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut value: anyref = first_argument_or_null(arguments);
+
+            if ref_test!(value, Object) {
+                value = (value as Object).value;
+            }
+
+            if !ref_test!(value, Symbol) {
+                throw!(JSException, create_error(data!("TypeError"), create_string_from_array("Symbol.prototype.valueOf requires that 'this' be a Symbol")));
+            }
+
+            return value;
         }
 
         fn String_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -5819,17 +5939,19 @@ pub fn generate_module() -> WatModule {
             let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
             let syntax_error_constructor: Function = new_function(global_scope as Scope, SyntaxError_constructor, null);
 
+            global_object_prototype = create_object_prototype();
+            global_symbol_prototype = create_symbol_prototype(symbol_constructor);
+            setup_symbol_constructor(symbol_constructor);
+
             promise_prototype = create_promise_prototype();
             generator_prototype = create_generator_prototype();
             async_generator_prototype = create_async_generator_prototype();
-            global_object_prototype = create_object_prototype();
             global_array_prototype = create_array_prototype();
             global_function_prototype = create_function_prototype();
             global_number_prototype = create_number_prototype();
             global_boolean_prototype = create_boolean_prototype();
             global_string_prototype = create_string_prototype();
             global_bigint_prototype = create_bigint_prototype();
-            global_symbol_prototype = create_symbol_prototype(symbol_constructor);
 
             set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
             set_property(async_generator_constructor, data!("prototype"), create_bare_property(async_generator_prototype));
@@ -5838,10 +5960,6 @@ pub fn generate_module() -> WatModule {
             set_property(number_constructor, data!("prototype"), create_bare_property(global_number_prototype));
             set_property(boolean_constructor, data!("prototype"), create_bare_property(global_boolean_prototype));
             set_property(string_constructor, data!("prototype"), create_bare_property(global_string_prototype));
-            set_property(symbol_constructor, data!("prototype"), create_bare_property(global_symbol_prototype));
-            set_property(symbol_constructor, data!("iterator"), create_bare_property(symbol_iterator));
-            set_property(symbol_constructor, data!("asyncIterator"), create_bare_property(symbol_async_iterator));
-            set_property(symbol_constructor, data!("toPrimitive"), create_bare_property(symbol_to_primitive));
 
             let error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(global_object_prototype), null) as Object;
             set_property_value(error_prototype, data!("constructor"), error_constructor);
