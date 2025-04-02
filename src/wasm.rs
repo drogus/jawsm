@@ -1475,10 +1475,19 @@ pub fn generate_module() -> WatModule {
             }
 
             if ref_test!(target, Symbol) {
-                // TODO: create symbol object
+                return create_symbol_object(target as Symbol);
             }
 
             return target;
+        }
+
+        fn create_symbol_object(value: Symbol) -> anyref {
+            // TODO: et constructor
+            let obj: Object = create_object();
+            obj.own_prototype = global_symbol_prototype;
+            obj.value = value;
+            set_property_value(obj, data!("constructor"), get_variable(global_scope as Scope, data!("Symbol")));
+            return obj;
         }
 
         fn ToPrimitive(target: anyref, desired_type: i32) -> anyref {
