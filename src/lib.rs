@@ -1691,6 +1691,7 @@ impl WasmTranslator {
             .current_function()
             .add_local("$result", WasmType::Anyref);
         let mut instructions = self.translate_expression(conditional.condition(), true);
+        instructions.push(W::call("$ToBoolean"));
         instructions.push(W::I31GetS);
 
         let mut then_instructions = self.translate_expression(conditional.if_true(), true);

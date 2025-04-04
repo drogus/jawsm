@@ -497,6 +497,12 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("join"),
                 create_property_function(global_scope as Scope, Array_join, null));
 
+            set_property(object, data!("push"),
+                create_property_function(global_scope as Scope, Array_push, null));
+
+            set_property(object, data!("at"),
+                create_property_function(global_scope as Scope, Array_at, null));
+
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Array_constructor, null));
 
@@ -548,6 +554,9 @@ pub fn generate_module() -> WatModule {
 
             set_property(constructor, data!("from"),
                 create_property_function(global_scope as Scope, Array_from, null));
+
+            set_property(constructor, data!("isArray"),
+                create_property_function(global_scope as Scope, Array_isArray, null));
         }
 
         fn setup_symbol_constructor(symbol_constructor: Function) {
@@ -595,6 +604,17 @@ pub fn generate_module() -> WatModule {
             return new_static_string(data!("[object Object]"), 15);
         }
 
+        fn Array_isArray(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let result: i31ref;
+            if ref_test!(first_argument_or_null(arguments), Array) {
+                result = 1 as i31ref;
+                return result;
+            }
+
+            result = 0 as i31ref;
+            return result;
+        }
+
         fn Array_from(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let array: anyref = first_argument_or_null(arguments);
             return array_from(array);
@@ -603,7 +623,11 @@ pub fn generate_module() -> WatModule {
         fn array_from(array: anyref) -> Array {
             if ref_test!(array, Array) {
                 return clone_array(array as Array);
-            } else if is_object(array) {
+            } else if is_object(array) || ref_test!(array, String) || ref_test!(array, StaticString) {
+                if ref_test!(array, StaticString) {
+                    array = convert_static_string_to_string(array as StaticString);
+                }
+
                 let iterator_maybe: anyref = get_property_value_sym(array, symbol_iterator as Symbol);
                 let mut new_array: AnyrefArray = [null; 1];
                 let mut new_array_tmp: AnyrefArray;
@@ -711,6 +735,45 @@ pub fn generate_module() -> WatModule {
                 own_prototype: global_array_prototype
             };
 
+        }
+
+        fn Array_at(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let array: Array = array_from(this);
+            let index_num: Number = ToInteger(first_argument_or_null(arguments));
+            if is_infinity(index_num) {
+                return null;
+            }
+
+            let index: i32 = index_num.value as i32;
+            if index < 0 {
+                index = array.length + index;
+                if index < 0 {
+                    return null;
+                }
+            }
+
+            if index > array.length - 1 {
+                return null;
+            }
+
+            let array_data: AnyrefArray = array.array;
+            return array_data[index];
+        }
+
+        fn Array_push(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            // TODO: handle non-array objects
+            let array: Array = this as Array;
+            let data: AnyrefArray = array.array;
+            // TODO: it might be better to have a bigger capacity and expand it more at one time
+            let new_data: AnyrefArray = [null; len!(data) + 1];
+            let value: anyref = first_argument_or_null(arguments);
+            array_copy(AnyrefArray, AnyrefArray, new_data, 0, data, 0, len!(data));
+            new_data[len!(data)] = value;
+
+            array.array = new_data;
+            array.length = len!(new_data);
+
+            return null;
         }
 
         fn Array_join(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1555,6 +1618,16 @@ pub fn generate_module() -> WatModule {
             return new_number(array.length as f64);
         }
 
+        fn String_length(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            if ref_test!(this, String) {
+                return new_number((this as String).length as f64);
+            } else if ref_test!(this, StaticString) {
+                return new_number((this as StaticString).length as f64);
+            }
+
+            return new_number(0 as f64);
+        }
+
         fn Array_set_length(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             let length_number: Number = ToNumber(first_argument_or_null(arguments));
 
@@ -1606,6 +1679,54 @@ pub fn generate_module() -> WatModule {
             return value == floor!(value);
         }
 
+        fn ToInteger(target: anyref) -> Number {
+            let number: Number = ToNumber(target);
+            let value: f64 = number.value;
+            if is_nan(number) {
+                return new_number(0 as f64);
+            }
+
+            number.value = trunc!(value);
+            return number;
+        }
+
+        fn min(val1: f64, val2: f64) -> f64 {
+            if val1 < val2 {
+                return val1;
+            }
+            return val2;
+        }
+
+        fn JAWSM_LengthOfArrayLike(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return LengthOfArrayLike(first_argument_or_null(arguments));
+        }
+
+        fn LengthOfArrayLike(obj: anyref) -> Number {
+            return ToLength(get_property_value(obj, data!("length")));
+        }
+
+        fn JAWSM_ToLength(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return ToLength(first_argument_or_null(arguments));
+        }
+
+        fn ToLength(value: anyref) -> Number {
+            let number: Number = ToIntegerOrInfinity(value);
+            if number.value > 0 as f64 {
+                return new_number(min(number.value, 0x1FFFFFFFFFFFFF as f64));
+            }
+
+            return new_number(0 as f64);
+        }
+
+        fn ToIntegerOrInfinity(value: anyref) -> Number {
+            let number: Number = ToNumber(value);
+            if is_nan(number) || (number.value == 0 as f64) {
+                return new_number(0 as f64);
+            }
+            let f: f64 = number.value;
+            return new_number(trunc!(f));
+        }
+
         fn ToNumber(target: anyref) -> Number {
             let result_i31ref: i31ref;
             let str: String;
@@ -1651,6 +1772,10 @@ pub fn generate_module() -> WatModule {
             return ToNumber(result);
         }
 
+        fn JAWSM_ToPropertyKey(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return ToPropertyKey(first_argument_or_null(arguments));
+        }
+
         fn ToPropertyKey(target: anyref) -> anyref {
             let value: anyref = ToPrimitive(target, TO_PRIMITIVE_STRING);
             if ref_test!(value, Symbol) {
@@ -1658,6 +1783,10 @@ pub fn generate_module() -> WatModule {
             }
 
             return ToString(value);
+        }
+
+        fn JAWSM_ToObject(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return ToObject(first_argument_or_null(arguments));
         }
 
         fn ToObject(target: anyref) -> anyref {
@@ -1734,7 +1863,7 @@ pub fn generate_module() -> WatModule {
             return target;
         }
 
-        fn ToBoolean(value: anyref) -> anyref {
+        fn ToBoolean(value: anyref) -> i31ref {
             let result: i31ref;
             let number: f64;
             if ref_test!(value, null) {
@@ -1744,7 +1873,7 @@ pub fn generate_module() -> WatModule {
                 result = 0 as i31ref;
                 return result;
             } else if is_true(value) || is_false(value) {
-                return value;
+                return value as i31ref;
             } else if ref_test!(value, Number) {
                 number = (value as Number).value;
                 if number == 0.0 || number != number {
@@ -2131,7 +2260,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Array_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            return create_array(0);
+            return create_array(ToLength(first_argument_or_null(arguments)).value as i32);
         }
 
         fn String_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -2345,6 +2474,13 @@ pub fn generate_module() -> WatModule {
 
             set_property(object, data!("valueOf"),
                 create_property_function(global_scope as Scope, String_valueOf, null));
+
+            let length_getter: Function = new_function(global_scope as Scope, String_length, null);
+            set_property(object, data!("length"),
+                Property {
+                    value: AccessorMethod { get: length_getter, set: null },
+                    flags: PROPERTY_IS_GETTER
+                });
 
             return object;
         }
@@ -3344,8 +3480,9 @@ pub fn generate_module() -> WatModule {
         }
 
         fn create_array(size: i32) -> Array {
+            let empty: i31ref = 3 as i31ref;
             return Array {
-                array: [null; size],
+                array: [empty; size],
                 length: size,
                 properties: create_propertymap(),
                 own_prototype: global_array_prototype
@@ -3815,7 +3952,7 @@ pub fn generate_module() -> WatModule {
         fn get_property_str(target: anyref, name: anyref) -> Nullable<Property> {
             let offset: i32;
 
-            let name_str: String = to_string(name);
+            let name_str: String = ToString(name);
             let offset: i32 = get_data_offset_str(name_str.data);
 
             if offset == 0 {
@@ -3840,6 +3977,10 @@ pub fn generate_module() -> WatModule {
                     if !ref_test!(own_prototype, null) {
                         result = get_property_sym(own_prototype, key);
                     }
+                }
+            } else {
+                if !ref_test!(own_prototype, null) {
+                    result = get_property_sym(own_prototype, key);
                 }
             }
 
@@ -4279,6 +4420,15 @@ pub fn generate_module() -> WatModule {
             return create_array(0);
         }
 
+        fn is_array_element_available(array: Array, i: i32) -> i32 {
+            let data: AnyrefArray = array.array;
+            if i < array.length && i >= 0 {
+                return !is_empty(data[i]);
+            }
+
+            return 0;
+        }
+
         fn get_array_element(obj: anyref, i: i32) -> anyref {
             if ref_test!(obj, Array) {
                 let array: AnyrefArray = (obj as Array).array;
@@ -4289,6 +4439,19 @@ pub fn generate_module() -> WatModule {
                         return array[i];
                     }
                 }
+            }
+
+            return null;
+        }
+
+        fn get_string_character(str: String, i: i32) -> anyref {
+            if i < 0 {
+                return null;
+            }
+
+            let data: I32Array = str.data;
+            if i < len!(data) {
+                return create_string_from_array([data[i]]);
             }
 
             return null;
@@ -4308,6 +4471,18 @@ pub fn generate_module() -> WatModule {
 
                 if !is_nan(index) && !is_infinity(index) && is_integer(index) {
                     return get_array_element(target, index.value as i32);
+                }
+            }
+
+            if ref_test!(target, StaticString) {
+                target = convert_static_string_to_string(target as StaticString);
+            }
+
+            if ref_test!(target, String) {
+                let index: Number = ToNumber(prop_name);
+
+                if !is_nan(index) && !is_infinity(index) && is_integer(index) {
+                    return get_string_character(target as String, index.value as i32);
                 }
             }
 
@@ -5086,7 +5261,68 @@ pub fn generate_module() -> WatModule {
         }
 
         fn operator_in(arg1: anyref, arg2: anyref) -> i31ref {
-            let property: Nullable<Property> = get_property_str(arg2, arg1);
+            let property: Nullable<Property>;
+            let mut is_wrapped_string: i32 = 0;
+            let mut index_num: Number = new_number(0 as f64);
+            let index: i32;
+            let array: Array = create_empty_array();
+            let mut string: String = create_empty_string();
+            let array_data: AnyrefArray = [null; 0];
+            let string_data: I32Array = [0; 0];
+
+            if ref_test!(arg2, Array) {
+                array = arg2 as Array;
+                array_data = array.array;
+                index_num = ToNumber(arg1);
+
+                if !is_nan(index_num) && !is_infinity(index_num) && is_integer(index_num) {
+                    index = index_num.value as i32;
+
+                    if index > array.length || index < 0 {
+                        return 0 as i31ref;
+                    }
+
+                    return is_array_element_available(array, index) as i31ref;
+                }
+            } else if ref_test!(arg2, StaticString) {
+                arg2 = convert_static_string_to_string(arg2 as StaticString);
+            } else if ref_test!(arg2, Object) {
+                if ref_test!((arg2 as Object).value, StaticString) {
+                    // normalize
+                    (arg2 as Object).value = convert_static_string_to_string((arg2 as Object).value as StaticString);
+                    is_wrapped_string = 1;
+                } else if ref_test!((arg2 as Object).value, String) {
+                    is_wrapped_string = 1;
+                }
+            }
+
+            if ref_test!(arg2, String) || is_wrapped_string {
+                if is_wrapped_string {
+                    string = (arg2 as Object).value as String;
+                } else {
+                    string = arg2 as String;
+                }
+
+                string_data = string_data;
+                index_num = ToNumber(arg1);
+
+                if !is_nan(index_num) && !is_infinity(index_num) && is_integer(index_num) {
+                    index = index_num.value as i32;
+
+                    if index > string.length || index < 0 {
+                        return 0 as i31ref;
+                    }
+
+                    return 1 as i31ref;
+                }
+            }
+
+            let key: anyref = ToPropertyKey(arg1);
+            if ref_test!(key, Symbol) {
+                property = get_property_sym(arg2, key as Symbol);
+            } else {
+                property = get_property_str(arg2, key);
+            }
 
             if ref_test!(property, null) {
                 return 0 as i31ref;
@@ -5265,6 +5501,10 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_boolean(value: anyref) -> i32 {
+            if ref_test!(value, null) {
+                return 0;
+            }
+
             if ref_test!(value, i31ref) {
                 return (value as i31ref) == 0 || (value as i31ref) == 1;
             }
@@ -5426,12 +5666,13 @@ pub fn generate_module() -> WatModule {
         }
 
         fn logical_or(arg1: anyref, arg2: anyref) -> anyref {
-            if ref_test!(arg1, null) == 0 {
-                return arg1;
-            }
-
             if ref_test!(arg1, i31ref) {
-                let val: i32 = arg1 as i31ref as i32;
+                let val: i32;
+                if ref_test!(arg1, null) {
+                    val = 0;
+                } else {
+                    val = arg1 as i31ref as i32;
+                }
                 if val != 0 && val != 2 {
                     return arg1;
                 }
@@ -6167,8 +6408,22 @@ pub fn generate_module() -> WatModule {
             poll_many(offset, length, offset);
         }
 
+        fn setup_jawsm_global_object() {
+            let JAWSM: anyref = create_object();
+            declare_variable(global_scope as Scope, data!("JAWSM"), JAWSM, VARIABLE_CONST);
+
+            set_property(JAWSM, data!("ToLength"),
+                create_property_function(global_scope as Scope, JAWSM_ToLength, null));
+            set_property(JAWSM, data!("ToObject"),
+                create_property_function(global_scope as Scope, JAWSM_ToObject, null));
+            set_property(JAWSM, data!("LengthOfArrayLike"),
+                create_property_function(global_scope as Scope, JAWSM_LengthOfArrayLike, null));
+        }
+
         fn install_globals() {
             global_scope = new_scope(null);
+
+            setup_jawsm_global_object();
 
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let generator_constructor: Function = new_function(global_scope as Scope, Generator_constructor, null);
