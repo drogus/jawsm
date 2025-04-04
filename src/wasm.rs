@@ -193,7 +193,7 @@ pub fn generate_module() -> WatModule {
 
         struct Array {
             array: mut AnyrefArray,
-            length: i32,
+            length: mut i32,
             properties: mut PropertyMap,
             own_prototype: mut anyref,
         }
@@ -494,6 +494,9 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("toString"),
                 create_property_function(global_scope as Scope, Array_toString, null));
 
+            set_property(object, data!("join"),
+                create_property_function(global_scope as Scope, Array_join, null));
+
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Array_constructor, null));
 
@@ -538,6 +541,13 @@ pub fn generate_module() -> WatModule {
 
             object.own_prototype = global_object_prototype as Object;
             return object;
+        }
+
+        fn setup_array_constructor(constructor: Function) {
+            set_property(constructor, data!("prototype"), create_bare_property(global_array_prototype));
+
+            set_property(constructor, data!("from"),
+                create_property_function(global_scope as Scope, Array_from, null));
         }
 
         fn setup_symbol_constructor(symbol_constructor: Function) {
@@ -585,71 +595,209 @@ pub fn generate_module() -> WatModule {
             return new_static_string(data!("[object Object]"), 15);
         }
 
-        //fn Array_join(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-        //}
+        fn Array_from(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let array: anyref = first_argument_or_null(arguments);
+            return array_from(array);
+        }
 
-        fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            if ref_test!(this, Array) {
-                let array: Array = this as Array;
-                let length: i32 = array.length;
-                let elements: AnyrefArray = array.array;
-                let strings: StringArray = [null; array.length];
-                let new_data: I32Array;
+        fn array_from(array: anyref) -> Array {
+            if ref_test!(array, Array) {
+                return clone_array(array as Array);
+            } else if is_object(array) {
+                let iterator_maybe: anyref = get_property_value_sym(array, symbol_iterator as Symbol);
+                let mut new_array: AnyrefArray = [null; 1];
+                let mut new_array_tmp: AnyrefArray;
                 let mut i: i32 = 0;
-                let mut j: i32 = 0;
-                let mut k: i32 = 0;
-                let mut str: anyref;
-                let mut element: anyref;
-                let mut result_length: i32 = 0;
-                let mut str: String;
-                let mut str_length: i32;
-                let mut str_data: I32Array;
 
-                // TODO: this should delegate to join() in the future
-                while i < length {
-                    element = elements[i];
-                    str = ToString(element);
-                    strings[i] = str;
-                    result_length += str.length;
-                    i += 1;
-                }
+                if ref_test!(iterator_maybe, Function) {
+                    let mut iterator: anyref = call_function(iterator_maybe as Function, null, create_arguments_0(), null);
+                    let mut result: anyref = null;
+                    let mut value: anyref = null;
+                    let mut done: anyref = null;
 
-                // commas
-                result_length += length - 1;
-                new_data = [0; result_length];
-
-                i = 0;
-                // i - strings index
-                // j - str_data index
-                // k - result string index
-                while i < length {
-                    j = 0;
-                    str = strings[i] as String;
-                    str_length = str.length;
-                    str_data = str.data;
-                    while j < str_length {
-                        new_data[k] = str_data[j];
-                        j += 1;
-                        k += 1;
+                    if !is_object(iterator) {
+                        let error: anyref = create_error(data!("TypeError"), create_string_from_array("Result of the Symbol.iterator method is not an object"));
+                        throw!(JSException, error);
                     }
 
-                    if i != length - 1 {
-                        new_data[k] = ',';
-                        k += 1;
+                    let next_function: anyref = get_property_value(iterator, data!("next"));
+
+                    if !ref_test!(next_function, Function) {
+                        let error: anyref = create_error(data!("TypeError"), add_strings(ToString(next_function), create_string_from_array(" is not a function")));
+                        throw!(JSException, error);
                     }
 
-                    i += 1;
-                }
+                    while 1 {
+                        result = call_function(next_function as Function, null, create_arguments_0(), null);
+                        if !is_object(result) {
+                            let error: anyref = create_error(data!("TypeError"), create_string_from_array("Iterator result is not an object"));
+                            throw!(JSException, error);
+                        }
+                        done = get_property_value(result, data!("done"));
+                        if is_true(ToBoolean(done)) {
+                            break;
+                        }
+                        value = get_property_value(result, data!("value"));
 
-                return String {
-                    data: new_data,
-                    length: result_length,
-                };
-            } else {
-                return new_static_string(data!("TODO: how does Array.prototype.toString works on non-arrays"), 59);
+                        if i > len!(new_array) - 1 {
+                            // expand array
+                            new_array_tmp = [null; len!(new_array) * 2];
+                            array_copy(AnyrefArray, AnyrefArray, new_array_tmp, 0, new_array, 0, len!(new_array));
+                            new_array = new_array_tmp;
+                        }
+                        new_array[i] = value;
+                        i += 1;
+                    }
+
+                    new_array_tmp = [null; i];
+                    array_copy(AnyrefArray, AnyrefArray, new_array_tmp, 0, new_array, 0, len!(new_array_tmp));
+                    return Array {
+                        array: new_array_tmp,
+                        length: len!(new_array_tmp),
+                        properties: create_propertymap(),
+                        own_prototype: global_array_prototype
+                    };
+                } else {
+                    let length_maybe: anyref = get_property_value(array, data!("length"));
+                    let length_num: Number = ToNumber(length_maybe);
+                    let length: i32 = 0;
+                    if is_nan(length_num) {
+                        return create_empty_array();
+                    }
+
+                    if is_infinity(length_num) {
+                        let error: anyref = create_error(data!("RangeError"), create_string_from_array("Invalid array length"));
+                        throw!(JSException, error);
+                    }
+
+                    length = length_num.value as i32;
+                    new_array = [null; length];
+
+                    while i < length {
+                        new_array[i] = get_property_value_str(array, NumberToString(new_number(i as f64), 10));
+                        i+= 1;
+                    }
+
+                    return Array {
+                        array: new_array,
+                        length: len!(new_array),
+                        properties: create_propertymap(),
+                        own_prototype: global_array_prototype
+                    };
+                }
             }
 
-            return null;
+            return create_empty_array();
+        }
+
+        fn clone_array(array: Array) -> Array {
+            let new_array: AnyrefArray = [null; array.length];
+
+            array_copy(AnyrefArray, AnyrefArray, new_array, 0, array.array, 0, array.length);
+
+            return Array {
+                array: new_array,
+                length: array.length,
+                properties: create_propertymap(),
+                own_prototype: global_array_prototype
+            };
+        }
+
+        fn create_empty_array() -> Array {
+            return Array {
+                array: [null; 0],
+                length: 0,
+                properties: create_propertymap(),
+                own_prototype: global_array_prototype
+            };
+
+        }
+
+        fn Array_join(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let array: Array = create_empty_array();
+            if ref_test!(this, Array) {
+                array = this as Array;
+            } else {
+                array = array_from(this);
+            }
+
+            let maybe_separator: anyref = first_argument_or_null(arguments);
+            let separator: String = create_empty_string();
+            if ref_test!(maybe_separator, null) {
+                separator = create_string_from_array(",");
+            } else {
+                separator = ToString(maybe_separator);
+            }
+            let separator_length: i32 = separator.length;
+            let separator_data: I32Array = separator.data;
+            let length: i32 = array.length;
+            let elements: AnyrefArray = array.array;
+            let strings: StringArray = [null; array.length];
+            let new_data: I32Array;
+            let mut i: i32 = 0;
+            let mut j: i32 = 0;
+            let mut k: i32 = 0;
+            let mut str: anyref = create_empty_string();
+            let mut element: anyref;
+            let mut result_length: i32 = 0;
+            let mut str: String;
+            let mut str_length: i32;
+            let mut str_data: I32Array;
+
+            // TODO: this should delegate to join() in the future
+            while i < length {
+                element = elements[i];
+                if is_empty(element) {
+                    str = create_empty_string();
+                } else {
+                    str = ToString(element);
+                }
+                strings[i] = str;
+                result_length += str.length;
+                i += 1;
+            }
+
+            // separators
+            if length > 0 {
+                result_length += (length - 1) * separator_length;
+            }
+            new_data = [0; result_length];
+
+            i = 0;
+            // i - strings index
+            // j - str_data index
+            // k - result string index
+            while i < length {
+                j = 0;
+                str = strings[i] as String;
+                str_length = str.length;
+                str_data = str.data;
+                while j < str_length {
+                    new_data[k] = str_data[j];
+                    j += 1;
+                    k += 1;
+                }
+
+                j = 0;
+                if i != length - 1 {
+                    while j < separator_length {
+                        new_data[k] = separator_data[j];
+                        k += 1;
+                        j += 1;
+                    }
+                }
+
+                i += 1;
+            }
+
+            return String {
+                data: new_data,
+                length: result_length,
+            };
+        }
+
+        fn Array_toString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return Array_join(scope, this, create_arguments_1(create_string_from_array(",")), meta);
         }
 
         fn ToString(target: anyref) -> String {
@@ -1361,10 +1509,14 @@ pub fn generate_module() -> WatModule {
         }
 
         fn is_primitive(value: anyref) -> i32 {
-            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref) || ref_test!(value, BigInt) || ref_test!(value, null);
+            return ref_test!(value, Number) || ref_test!(value, String) || ref_test!(value, StaticString) || ref_test!(value, i31ref) || ref_test!(value, BigInt) || ref_test!(value, null) || ref_test!(value, Symbol);
         }
 
         fn is_object(value: anyref) -> i32 {
+            if ref_test!(value, null) {
+                return 0;
+            }
+
             if ref_test!(value, Object) || ref_test!(value, Promise) || ref_test!(value, Array) || ref_test!(value, AsyncGenerator) || ref_test!(value, Generator) {
                 return 1;
             }
@@ -1404,14 +1556,57 @@ pub fn generate_module() -> WatModule {
         }
 
         fn Array_set_length(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            let length_number: anyref = ToNumber(first_argument_or_null(arguments));
+            let length_number: Number = ToNumber(first_argument_or_null(arguments));
 
-            return null;
+            if is_infinity(length_number) || is_nan(length_number) || !is_integer(length_number) {
+                let error: anyref = create_error(data!("RangeError"), create_string_from_array("Failed to set the 'length' property on 'Array': Invalid array length"));
+                throw!(JSException, error);
+            }
 
-            // return new_number(array.length as f64);
+            let array: Array = this as Array;
+            let lengthf64: f64 = length_number.value;
+            let new_length: i32 = trunc!(lengthf64) as i32;
+
+            return array_set_length(array, new_length);
         }
 
-        fn ToNumber(target: anyref) -> anyref {
+        fn array_set_length(array: Array, new_length: i32) -> Array {
+            let empty: i31ref = 3 as i31ref;
+            let new_array: AnyrefArray = [empty; new_length];
+            let old_array: AnyrefArray = array.array;
+
+            let i: i32 = 0;
+            let stop: i32;
+            if new_length >= array.length {
+                stop = array.length;
+            } else {
+                stop = new_length;
+            }
+
+            while i < stop {
+                new_array[i] = old_array[i];
+                i += 1;
+            }
+
+            array.array = new_array;
+            array.length = new_length;
+            return array;
+        }
+
+        fn is_infinity(number: Number) -> i32 {
+            return number.value == f64::INFINITY || number.value == f64::NEG_INFINITY;
+        }
+
+        fn is_nan(number: Number) -> i32 {
+            return number.value != number.value;
+        }
+
+        fn is_integer(number: Number) -> i32 {
+            let value: f64 = number.value;
+            return value == floor!(value);
+        }
+
+        fn ToNumber(target: anyref) -> Number {
             let result_i31ref: i31ref;
             let str: String;
             if ref_test!(target, null) {
@@ -1419,7 +1614,7 @@ pub fn generate_module() -> WatModule {
             }
 
             if ref_test!(target, Number) {
-                return target;
+                return target as Number;
             }
 
             if is_null(target) || is_false(target) {
@@ -1454,6 +1649,15 @@ pub fn generate_module() -> WatModule {
             }
 
             return ToNumber(result);
+        }
+
+        fn ToPropertyKey(target: anyref) -> anyref {
+            let value: anyref = ToPrimitive(target, TO_PRIMITIVE_STRING);
+            if ref_test!(value, Symbol) {
+                return value;
+            }
+
+            return ToString(value);
         }
 
         fn ToObject(target: anyref) -> anyref {
@@ -1533,11 +1737,14 @@ pub fn generate_module() -> WatModule {
         fn ToBoolean(value: anyref) -> anyref {
             let result: i31ref;
             let number: f64;
-            if is_true(value) || is_false(value) {
-                return value;
-            } else if ref_test!(value, null) {
+            if ref_test!(value, null) {
                 result = 0 as i31ref;
                 return result;
+            } else if is_null(value) {
+                result = 0 as i31ref;
+                return result;
+            } else if is_true(value) || is_false(value) {
+                return value;
             } else if ref_test!(value, Number) {
                 number = (value as Number).value;
                 if number == 0.0 || number != number {
@@ -1656,7 +1863,7 @@ pub fn generate_module() -> WatModule {
             };
         }
 
-        fn StringToNumber(target: String) -> anyref {
+        fn StringToNumber(target: String) -> Number {
             // Variable declarations
             let mut sign: f64 = 1.0;
             let mut start: i32 = 0;
@@ -1807,7 +2014,7 @@ pub fn generate_module() -> WatModule {
             return new_number(value);
         }
 
-        fn parse_non_decimal(data: I32Array, start: i32, end: i32, base: i32, sign: f64) -> anyref {
+        fn parse_non_decimal(data: I32Array, start: i32, end: i32, base: i32, sign: f64) -> Number {
             // Variable declarations
             let mut value: f64 = 0.0;
             let mut i: i32 = start;
@@ -2040,7 +2247,17 @@ pub fn generate_module() -> WatModule {
             if len!(arguments) > 0 {
                 Error_constructor(scope, this, arguments, null);
             }
-            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 14));
+            set_property_value(this, data!("name"), new_static_string(data!("TypeError"), 9));
+
+            return this;
+        }
+
+        fn RangeError_constructor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let message: anyref = null;
+            if len!(arguments) > 0 {
+                Error_constructor(scope, this, arguments, null);
+            }
+            set_property_value(this, data!("name"), new_static_string(data!("RangeError"), 10));
 
             return this;
         }
@@ -4066,7 +4283,11 @@ pub fn generate_module() -> WatModule {
             if ref_test!(obj, Array) {
                 let array: AnyrefArray = (obj as Array).array;
                 if i < len!(array) {
-                    return array[i];
+                    if is_empty(array[i]) {
+                        return null;
+                    } else {
+                        return array[i];
+                    }
                 }
             }
 
@@ -4083,22 +4304,20 @@ pub fn generate_module() -> WatModule {
 
         fn get_property_or_array_value(target: anyref, prop_name: anyref) -> anyref {
             if ref_test!(target, Array) {
-                // TODO: string that converts to a number should also fetch an element
-                if ref_test!(prop_name, Number) {
-                    // TODO: this will cast to i32, which will essentially get rid of the
-                    // fraction. In case the Number is *not* an integer it shouldn't be treated as
-                    // an index, but with current implementation it will
-                    return get_array_element(target, (prop_name as Number).value as i32);
-                } else if ref_test!(prop_name, Symbol) {
-                    return get_property_value_sym(target, prop_name as Symbol);
-                } else {
-                    return get_property_value_str(target, to_string(prop_name));
+                let index: Number = ToNumber(prop_name);
+
+                if !is_nan(index) && !is_infinity(index) && is_integer(index) {
+                    return get_array_element(target, index.value as i32);
                 }
-            } else if is_object(target) {
+            }
+
+            if is_object(target) {
+                let converted_prop_name: anyref = ToPropertyKey(prop_name);
+
                 if ref_test!(prop_name, Symbol) {
-                    return get_property_value_sym(target, prop_name as Symbol);
+                    return get_property_value_sym(target, converted_prop_name as Symbol);
                 } else {
-                    return get_property_value_str(target, to_string(prop_name));
+                    return get_property_value_str(target, converted_prop_name as String);
                 }
             }
 
@@ -4107,35 +4326,40 @@ pub fn generate_module() -> WatModule {
 
         fn set_property_or_array_value(target: anyref, prop_name: anyref, value: anyref) {
             if ref_test!(target, Array) {
-                // TODO: string that converts to a number should also set an element
-                if ref_test!(prop_name, Number) {
-                    // TODO: this will cast to i32, which will essentially get rid of the
-                    // fraction. In case the Number is *not* an integer it shouldn't be treated as
-                    // an index, but with current implementation it will
-                    set_array_element(target, (prop_name as Number).value as i32, value);
-                    return;
-                } else if ref_test!(prop_name, Symbol) {
-                    set_property_value_sym(target, prop_name as Symbol, value);
-                    return;
-                } else {
-                    return set_property_value_str(target, to_string(prop_name), value);
-                    return;
-                }
-            } else if is_object(target) {
-                if ref_test!(prop_name, Symbol) {
-                    set_property_value_sym(target, prop_name as Symbol, value);
-                    return;
-                } else {
-                    set_property_value_str(target, to_string(prop_name), value);
+                let index: Number = ToNumber(prop_name);
+
+                if !is_nan(index) && !is_infinity(index) && is_integer(index) {
+                    set_array_element(target, index.value as i32, value);
                     return;
                 }
             }
 
-            // TODO: do we have to throw an error here?
+            if is_object(target) {
+                let converted_prop_name: anyref = ToPropertyKey(prop_name);
+
+                if ref_test!(prop_name, Symbol) {
+                    set_property_value_sym(target, converted_prop_name as Symbol, value);
+                    return;
+                } else {
+                    set_property_value_str(target, converted_prop_name as String, value);
+                    return;
+                }
+            }
+
+            // TODO: do we have to throw an error here? It looks like it just silently ignores on
+            // primitives
         }
 
         fn set_array_element(target: anyref, index: i32, value: anyref) {
-            throw!(JSException, create_string_from_array("not implemented: set_array_element"));
+            let mut array: Array = target as Array;
+
+            if index > array.length - 1 {
+                array = array_set_length(array, index + 1);
+            }
+
+            let raw_array: AnyrefArray = array.array;
+
+            raw_array[index] = value;
         }
 
         fn destructure_property_single_name(target: anyref, property_name: i32, var_name: i32, scope: Scope, init: anyref, var_type_index: i32) {
@@ -5024,6 +5248,14 @@ pub fn generate_module() -> WatModule {
             return ref_test!(arg, String) || ref_test!(arg, StaticString);
         }
 
+        fn is_empty(arg: anyref) -> i32 {
+            if !ref_test!(arg, null) && ref_test!(arg, i31ref) {
+                return (arg as i31ref == 3);
+            }
+
+            return 0;
+        }
+
         fn is_null(arg: anyref) -> i32 {
             if ref_test!(arg, i31ref) {
                 return (arg as i31ref == 2);
@@ -5529,6 +5761,7 @@ pub fn generate_module() -> WatModule {
         fn log(arguments: JSArgs) {
             let len: i32 = len!(arguments);
             let mut iovectors_offset: i32 = free_memory_offset;
+            let original_offset: i32 = free_memory_offset;
             let mut offset: i32 = free_memory_offset + (len * 16);
             let mut handled: i32;
             let mut current: anyref;
@@ -5551,13 +5784,16 @@ pub fn generate_module() -> WatModule {
                 if ref_test!(current, BigInt) {
                     current = BigIntToString(current as BigInt, 10);
                     current = add_strings(current as String, create_string_from_array("n"));
-                } else if ref_test!(current, StaticString) {
+                }
+
+                if ref_test!(current, StaticString) {
                     static_str = current as StaticString;
                     str_utf8_len = utf16le_to_utf8(static_str.offset, static_str.length * 2, offset + static_str.length * 2);
                     memory[iovectors_offset] = offset + static_str.length * 2;
                     memory[iovectors_offset + 4] = str_utf8_len;
                     // we wrote to memory, now we have to advance the offset
                     offset += static_str.length * 2 + str_utf8_len;
+                    free_memory_offset = offset;
                     iovectors_offset += 8;
                     handled = 1;
                 } else {
@@ -5578,6 +5814,7 @@ pub fn generate_module() -> WatModule {
                     memory[iovectors_offset + 4] = str_utf8_len;
 
                     offset += str_len * 2 + str_utf8_len;
+                    free_memory_offset = offset;
 
                     iovectors_offset += 8;
                     handled = 1;
@@ -5598,7 +5835,9 @@ pub fn generate_module() -> WatModule {
             memory[iovectors_offset + 4] = 1;
 
             // Write to stdout
-            write(1, free_memory_offset, len * 2, 50);
+            write(1, original_offset, len * 2, 50);
+
+            free_memory_offset = original_offset;
         }
 
         fn add_pollable(pollable: Pollable) -> i32 {
@@ -5946,9 +6185,12 @@ pub fn generate_module() -> WatModule {
             let error_constructor: Function = new_function(global_scope as Scope, Error_constructor, null);
             let reference_error_constructor: Function = new_function(global_scope as Scope, ReferenceError_constructor, null);
             let type_error_constructor: Function = new_function(global_scope as Scope, TypeError_constructor, null);
+            let range_error_constructor: Function = new_function(global_scope as Scope, RangeError_constructor, null);
             let syntax_error_constructor: Function = new_function(global_scope as Scope, SyntaxError_constructor, null);
 
             global_object_prototype = create_object_prototype();
+            global_function_prototype = create_function_prototype();
+
             global_symbol_prototype = create_symbol_prototype(symbol_constructor);
             setup_symbol_constructor(symbol_constructor);
 
@@ -5956,7 +6198,6 @@ pub fn generate_module() -> WatModule {
             generator_prototype = create_generator_prototype();
             async_generator_prototype = create_async_generator_prototype();
             global_array_prototype = create_array_prototype();
-            global_function_prototype = create_function_prototype();
             global_number_prototype = create_number_prototype();
             global_boolean_prototype = create_boolean_prototype();
             global_string_prototype = create_string_prototype();
@@ -5965,7 +6206,7 @@ pub fn generate_module() -> WatModule {
             set_property(promise_constructor, data!("prototype"), create_bare_property(promise_prototype));
             set_property(async_generator_constructor, data!("prototype"), create_bare_property(async_generator_prototype));
             set_property(object_constructor, data!("prototype"), create_bare_property(global_object_prototype));
-            set_property(array_constructor, data!("prototype"), create_bare_property(global_array_prototype));
+            setup_array_constructor(array_constructor);
             set_property(number_constructor, data!("prototype"), create_bare_property(global_number_prototype));
             set_property(boolean_constructor, data!("prototype"), create_bare_property(global_boolean_prototype));
             set_property(string_constructor, data!("prototype"), create_bare_property(global_string_prototype));
@@ -5981,6 +6222,10 @@ pub fn generate_module() -> WatModule {
             let type_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype), null) as Object;
             set_property_value(type_error_prototype, data!("constructor"), type_error_constructor);
             set_property_value(type_error_constructor, data!("prototype"), type_error_prototype);
+
+            let range_error_prototype: Object = Object_create(global_scope as Scope, null, create_arguments_1(error_prototype), null) as Object;
+            set_property_value(range_error_prototype, data!("constructor"), range_error_constructor);
+            set_property_value(range_error_constructor, data!("prototype"), range_error_prototype);
 
             declare_variable(global_scope as Scope, data!("Promise"), promise_constructor, VARIABLE_CONST);
             declare_variable(global_scope as Scope, data!("Object"), object_constructor, VARIABLE_CONST);

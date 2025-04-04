@@ -1795,7 +1795,8 @@ impl WasmTranslator {
             let mut value = if let Some(expression) = item {
                 self.translate_expression(expression, true)
             } else {
-                vec![W::ref_null_any()]
+                // empty element
+                vec![W::i32_const(3), W::ref_i31()]
             };
 
             instructions.append(&mut value);
