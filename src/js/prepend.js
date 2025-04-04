@@ -44,14 +44,22 @@ Error.prototype.toString = function () {
     }
   };
 
-  let toObject = JAWSM.ToObject;
-  let IndexedObject = function(arg) { return arg; };
-  let lengthOfArrayLike = JAWSM.LengthOfArrayLike;
-  let bind = function(callback, that) { return callback.bind(that); };
+  const toObject = JAWSM.ToObject;
+  const IndexedObject = function(arg) { return arg; };
+  const lengthOfArrayLike = JAWSM.LengthOfArrayLike;
+  const bind = function(callback, that) { return callback.bind(that); };
   // TODO: this will differ once we implement more array types
-  let arraySpeciesCreate = function(that, length) { return Array(length); };
-  let push = function(target, value) {
+  const arraySpeciesCreate = function(that, length) { return Array(length); };
+  const push = function(target, value) {
     target.push(value);
+  }
+  const doesNotExceedSafeInteger = JAWSM.DoesNotExceedSafeInteger;
+  const setArrayLength = function (O, length) {
+    if (Array.isArray(O) && !Object.getOwnPropertyDescriptor(O, 'length').writable) {
+      throw new TypeError('Cannot set read only .length');
+    }
+    O.length = length;
+    return length;
   }
 
   // Copyright (c) 2014-2025 Denis Pushkarev
@@ -149,6 +157,34 @@ Error.prototype.toString = function () {
   Object.defineProperty(Array.prototype, "filterReject", {
     value: function(callbackFn, thisArg) {
       return filterReject(this, callbackFn, thisArg);
+    }
+  });
+
+  Object.defineProperty(Array.prototype, "push", {
+    value: function push() {
+      var O = toObject(this);
+      var len = lengthOfArrayLike(O);
+      var argCount = arguments.length;
+      doesNotExceedSafeInteger(len + argCount);
+      setArrayLength(O, len + argCount);
+      for (var i = 0; i < argCount; i++) {
+        O[len] = arguments[i];
+        len++;
+      }
+      return len;
+    }
+  });
+  Object.defineProperty(Array.prototype, "pop", {
+    value: function pop() {
+      var O = this;
+      var len = lengthOfArrayLike(O);
+      if (len == 0) {
+        return undefined;
+      } else {
+        const value = O[len - 1];
+        setArrayLength(O, len - 1);
+        return value;
+      }
     }
   });
 })();

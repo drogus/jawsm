@@ -33,6 +33,8 @@ pub fn generate_module() -> WatModule {
         tag!(InternalException, InternalExceptionType);
         tag!(JSException, JSExceptionType);
 
+        static SAFE_INTEGER: f64 = 0x1FFFFFFFFFFFFF as f64;
+
         static TO_PRIMITIVE_NUMBER: i32 = 1;
         static TO_PRIMITIVE_STRING: i32 = 2;
 
@@ -497,22 +499,19 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("join"),
                 create_property_function(global_scope as Scope, Array_join, null));
 
-            set_property(object, data!("push"),
-                create_property_function(global_scope as Scope, Array_push, null));
-
             set_property(object, data!("at"),
                 create_property_function(global_scope as Scope, Array_at, null));
 
             set_property(object, data!("constructor"),
                 create_property_function(global_scope as Scope, Array_constructor, null));
 
-            let length_getter: Function = new_function(global_scope as Scope, Array_length, null);
-            let length_setter: Function = new_function(global_scope as Scope, Array_set_length, null);
-            set_property(object, data!("length"),
-                Property {
-                    value: AccessorMethod { get: length_getter, set: length_setter },
-                    flags: PROPERTY_IS_GETTER | PROPERTY_IS_SETTER
-                });
+            // let length_getter: Function = new_function(global_scope as Scope, Array_length, null);
+            // let length_setter: Function = new_function(global_scope as Scope, Array_set_length, null);
+            // set_property(object, data!("length"),
+            //     Property {
+            //         value: AccessorMethod { get: length_getter, set: length_setter },
+            //         flags: PROPERTY_IS_GETTER | PROPERTY_IS_SETTER | PROPERTY_WRITABLE
+            //     });
 
             object.own_prototype = global_object_prototype as Object;
             return object;
@@ -594,6 +593,9 @@ pub fn generate_module() -> WatModule {
 
             set_property(constructor, data!("keys"),
                 create_property_function(global_scope as Scope, Object_keys, null));
+
+            set_property(constructor, data!("getOwnPropertyDescriptor"),
+                create_property_function(global_scope as Scope, Object_getOwnPropertyDescriptor, null));
         }
 
         fn Object_getPrototypeOf(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -758,22 +760,6 @@ pub fn generate_module() -> WatModule {
 
             let array_data: AnyrefArray = array.array;
             return array_data[index];
-        }
-
-        fn Array_push(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            // TODO: handle non-array objects
-            let array: Array = this as Array;
-            let data: AnyrefArray = array.array;
-            // TODO: it might be better to have a bigger capacity and expand it more at one time
-            let new_data: AnyrefArray = [null; len!(data) + 1];
-            let value: anyref = first_argument_or_null(arguments);
-            array_copy(AnyrefArray, AnyrefArray, new_data, 0, data, 0, len!(data));
-            new_data[len!(data)] = value;
-
-            array.array = new_data;
-            array.length = len!(new_data);
-
-            return null;
         }
 
         fn Array_join(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -1367,6 +1353,56 @@ pub fn generate_module() -> WatModule {
             return result;
         }
 
+        fn Object_getOwnPropertyDescriptor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            // right now it's the same as Object.keys(), but it should differ for arrays
+            let obj: anyref = ToObject(first_argument_or_null(arguments));
+            let key: anyref = ToPropertyKey(second_argument_or_null(arguments));
+            let maybe_property: anyref;
+            let property: Property;
+
+            if ref_test!(key, Symbol) {
+                maybe_property = get_own_property_sym(obj, key as Symbol);
+            } else {
+                maybe_property = get_own_property_str(obj, key);
+            }
+
+            if ref_test!(maybe_property, null) {
+                return null;
+            }
+
+            property = maybe_property as Property;
+            let result: Object = create_object();
+            let configurable: i31ref = 0 as i31ref;
+            let writable: i31ref = 0 as i31ref;
+            let enumerable: i31ref = 0 as i31ref;
+            let value: anyref = property.value;
+
+            if ref_test!(value, AccessorMethod) {
+                set_property_value(result, data!("get"), (value as AccessorMethod).get);
+                set_property_value(result, data!("set"), (value as AccessorMethod).set);
+            } else {
+                set_property_value(result, data!("value"), value);
+            }
+
+            if property.flags & PROPERTY_CONFIGURABLE != 0 {
+                configurable = 1 as i31ref;
+            }
+
+            if property.flags & PROPERTY_WRITABLE != 0 {
+                writable = 1 as i31ref;
+            }
+
+            if property.flags & PROPERTY_ENUMERABLE != 0 {
+                enumerable = 1 as i31ref;
+            }
+
+            set_property_value(result, data!("configurable"), configurable);
+            set_property_value(result, data!("writable"), writable);
+            set_property_value(result, data!("enumerable"), enumerable);
+
+            return result;
+        }
+
         fn Object_getOwnPropertyNames(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             // right now it's the same as Object.keys(), but it should differ for arrays
             let strings: StringArray = get_own_property_names(first_argument_or_null(arguments));
@@ -1534,7 +1570,7 @@ pub fn generate_module() -> WatModule {
                 property.flags = property.flags | PROPERTY_ENUMERABLE;
             }
 
-            if js_is_true(get_property_value(descriptor, data!("writeable"))) {
+            if js_is_true(get_property_value(descriptor, data!("writable"))) {
                 property.flags = property.flags | PROPERTY_WRITABLE;
             }
 
@@ -1628,15 +1664,14 @@ pub fn generate_module() -> WatModule {
             return new_number(0 as f64);
         }
 
-        fn Array_set_length(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
-            let length_number: Number = ToNumber(first_argument_or_null(arguments));
+        fn ArraySetLength(array: Array, value: anyref) -> anyref {
+            let length_number: Number = ToLength(value);
 
             if is_infinity(length_number) || is_nan(length_number) || !is_integer(length_number) {
                 let error: anyref = create_error(data!("RangeError"), create_string_from_array("Failed to set the 'length' property on 'Array': Invalid array length"));
                 throw!(JSException, error);
             }
 
-            let array: Array = this as Array;
             let lengthf64: f64 = length_number.value;
             let new_length: i32 = trunc!(lengthf64) as i32;
 
@@ -1647,19 +1682,13 @@ pub fn generate_module() -> WatModule {
             let empty: i31ref = 3 as i31ref;
             let new_array: AnyrefArray = [empty; new_length];
             let old_array: AnyrefArray = array.array;
-
-            let i: i32 = 0;
             let stop: i32;
             if new_length >= array.length {
                 stop = array.length;
             } else {
                 stop = new_length;
             }
-
-            while i < stop {
-                new_array[i] = old_array[i];
-                i += 1;
-            }
+            array_copy(AnyrefArray, AnyrefArray, new_array, 0, old_array, 0, stop);
 
             array.array = new_array;
             array.length = new_length;
@@ -1697,6 +1726,19 @@ pub fn generate_module() -> WatModule {
             return val2;
         }
 
+        fn JAWSM_DoesNotExceedSafeInteger(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return DoesNotExceedSafeInteger(first_argument_or_null(arguments) as Number);
+        }
+
+        fn DoesNotExceedSafeInteger(num: Number) -> Number {
+            if num.value > SAFE_INTEGER {
+                let error: anyref = create_error(data!("TypeError"), create_string_from_array("Maximum allowed index exceeded"));
+                throw!(JSException, error);
+            }
+
+            return num;
+        }
+
         fn JAWSM_LengthOfArrayLike(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return LengthOfArrayLike(first_argument_or_null(arguments));
         }
@@ -1712,7 +1754,7 @@ pub fn generate_module() -> WatModule {
         fn ToLength(value: anyref) -> Number {
             let number: Number = ToIntegerOrInfinity(value);
             if number.value > 0 as f64 {
-                return new_number(min(number.value, 0x1FFFFFFFFFFFFF as f64));
+                return new_number(min(number.value, SAFE_INTEGER));
             }
 
             return new_number(0 as f64);
@@ -3615,6 +3657,11 @@ pub fn generate_module() -> WatModule {
                 i+=1;
             }
             declare_variable(scope, data!("arguments"), args_object, VARIABLE_PARAM);
+            set_property(args_object, data!("length"),
+                Property {
+                    value: new_number(len as f64),
+                    flags: 0
+                });
         }
 
         fn declare_variable(scope: Scope, name: i32, value: anyref, var_flag: i32) {
@@ -4226,6 +4273,13 @@ pub fn generate_module() -> WatModule {
             let mut result: Nullable<Property> = null;
             let property: Property;
 
+            if ref_test!(target, Array) && name == data!("length") {
+                return Property {
+                    value: new_number((target as Array).length as f64),
+                    flags: PROPERTY_WRITABLE
+                };
+            }
+
             let properties: Nullable<PropertyMap> = get_propertymap(target);
             if !ref_test!(properties, null) {
                 result = propertymap_get(properties as PropertyMap, name);
@@ -4255,14 +4309,9 @@ pub fn generate_module() -> WatModule {
 
             let properties: Nullable<PropertyMap> = get_propertymap(target);
             let own_prototype: anyref = get_own_prototype(target);
-            if !ref_test!(properties, null) {
-                result = propertymap_get(properties as PropertyMap, name);
-                if ref_test!(result, null) {
-                    if !ref_test!(own_prototype, null) {
-                        result = get_property(own_prototype, name);
-                    }
-                }
-            } else {
+            result = get_own_property(target, name);
+
+            if ref_test!(result, null) {
                 if !ref_test!(own_prototype, null) {
                     result = get_property(own_prototype, name);
                 }
@@ -4738,45 +4787,17 @@ pub fn generate_module() -> WatModule {
         }
 
         fn set_property_value(target: anyref, name: i32, value: anyref) {
+            if ref_test!(target, Array) && name == data!("length") {
+                ArraySetLength(target as Array, value);
+                return;
+            }
+
             let property: Nullable<Property> = get_own_property(target, name);
             let value_property: Property;
             if ref_test!(property, null) {
                 value_property = create_property(value);
-                if ref_test!(target, Object) {
-                    propertymap_set((target as Object).properties, name, value_property);
-                    return;
-                }
-
-                if ref_test!(target, Function) {
-                    propertymap_set((target as Function).properties, name, value_property);
-                    return;
-                }
-
-                if ref_test!(target, Promise) {
-                    propertymap_set((target as Promise).properties, name, value_property);
-                    return;
-                }
-
-                if ref_test!(target, Generator) {
-                    propertymap_set((target as Generator).properties, name, value_property);
-                    return;
-                }
-
-                if ref_test!(target, AsyncGenerator) {
-                    propertymap_set((target as AsyncGenerator).properties, name, value_property);
-                    return;
-                }
-
-                if ref_test!(target, Array) {
-                    propertymap_set((target as Array).properties, name, value_property);
-                    return;
-                }
-
-                if ref_test!(target, GlobalThis) {
-                    let key: i32 = propertymap_set((target as GlobalThis).properties, name, value_property);
-                    declare_variable(global_scope as Scope, key, value_property.value, VARIABLE_VAR);
-                    return;
-                }
+                set_property(target, name, value_property);
+                return;
             } else {
                 value_property = property as Property;
                 if value_property.flags & PROPERTY_IS_SETTER != 0 {
@@ -6418,6 +6439,8 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, JAWSM_ToObject, null));
             set_property(JAWSM, data!("LengthOfArrayLike"),
                 create_property_function(global_scope as Scope, JAWSM_LengthOfArrayLike, null));
+            set_property(JAWSM, data!("DoesNotExceedSafeInteger"),
+                create_property_function(global_scope as Scope, JAWSM_DoesNotExceedSafeInteger, null));
         }
 
         fn install_globals() {
