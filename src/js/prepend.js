@@ -183,6 +183,34 @@ Error.prototype.toString = function () {
     };
   };
 
+  // `Array.prototype.{ reduce, reduceRight }` methods implementation
+  var createReduceMethod = function (IS_RIGHT) {
+    return function (that, callbackfn, argumentsLength, memo) {
+      var O = toObject(that);
+      var self = IndexedObject(O);
+      var length = lengthOfArrayLike(O);
+      aCallable(callbackfn);
+      if (length === 0 && argumentsLength < 2) throw new $TypeError(REDUCE_EMPTY);
+      var index = IS_RIGHT ? length - 1 : 0;
+      var i = IS_RIGHT ? -1 : 1;
+      if (argumentsLength < 2) while (true) {
+        if (index in self) {
+          memo = self[index];
+          index += i;
+          break;
+        }
+        index += i;
+        if (IS_RIGHT ? index < 0 : length <= index) {
+          throw new $TypeError(REDUCE_EMPTY);
+        }
+      }
+      for (;IS_RIGHT ? index >= 0 : length > index; index += i) if (index in self) {
+        memo = callbackfn(memo, self[index], index, O);
+      }
+      return memo;
+    };
+  };
+
   // `FlattenIntoArray` abstract operation
   // https://tc39.github.io/proposal-flatMap/#sec-FlattenIntoArray
   var flattenIntoArray = function (target, original, source, sourceLen, start, depth, mapper, thisArg) {
@@ -415,5 +443,87 @@ Error.prototype.toString = function () {
       A.length = flattenIntoArray(A, O, O, sourceLen, 0, 1, callbackfn, arguments.length > 1 ? arguments[1] : undefined);
       return A;
     }
+  });
+
+  // `Array.prototype.reduce` method
+  // https://tc39.es/ecma262/#sec-array.prototype.reduce
+  const leftReduce = createReduceMethod(false);
+  Object.defineProperty(Array.prototype, "reduce", {
+    value: function(callbackfn /* , initialValue */) {
+      var length = arguments.length;
+      return leftReduce(this, callbackfn, length, length > 1 ? arguments[1] : undefined);
+    }
+  });
+
+  // `Array.prototype.reduceRight` method
+  // https://tc39.es/ecma262/#sec-array.prototype.reduceright
+  const rightReduce = createReduceMethod(true);
+  Object.defineProperty(Array.prototype, "reduceRight", {
+    value: function(callbackfn /* , initialValue */) {
+      return rightReduce(this, callbackfn, arguments.length, arguments.length > 1 ? arguments[1] : undefined);
+    }
+  });
+
+  // `Array.prototype.reverse` method
+  // https://tc39.es/ecma262/#sec-array.prototype.reverse
+  Object.defineProperty(Array.prototype, "reverse", {
+    value: function() {
+      var O = toObject(this);
+      var len = lengthOfArrayLike(O);
+
+      let i = len - 1;
+      let j = 0;
+      while (i > j) {
+        let tmp = O[i];
+        O[i] = O[j];
+        O[j] = tmp;
+        i--;
+        j++;
+      }
+
+      return O;
+    }
+  });
+
+  // `Array.prototype.shift` method
+  // https://tc39.es/ecma262/#sec-array.prototype.shift
+  Object.defineProperty(Array.prototype, "shift", {
+    value: function() {
+      var O = toObject(this);
+      var len = lengthOfArrayLike(O);
+
+      const result = O[0];
+      let i = 0;
+      while (i < len - 1) {
+        O[i] = O[i + 1];
+        i++;
+      }
+
+      setArrayLength(O, len - 1);
+
+      return result;
+    }
+  });
+
+  // `Array.prototype.unshift` method
+  // https://tc39.es/ecma262/#sec-array.prototype.unshift
+  Object.defineProperty(Array.prototype, "unshift", {
+    value: function() {
+      var O = toObject(this);
+      var len = lengthOfArrayLike(O);
+
+      var argCount = arguments.length;
+      doesNotExceedSafeInteger(len + argCount);
+      setArrayLength(O, len + argCount);
+
+      // shift elements to the end
+      for (var i = len - 1; i >= 0; i--) {
+        O[i + argCount] = O[i];
+      }
+      for (var i = 0; i < argCount; i++) {
+        O[i] = arguments[i];
+      }
+      return len + argCount;
+     }
   });
 })();
