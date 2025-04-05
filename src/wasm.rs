@@ -268,7 +268,7 @@ pub fn generate_module() -> WatModule {
 
         // TODO; allow to insert valus from outside the macro, for now it's fine to just use
         // something big enough to allow small scripts to run
-        static mut free_memory_offset: i32 = 5000;
+        static mut free_memory_offset: i32 = 30000;
         static mut data_offsets_offset: i32 = 0;
         static mut global_scope: Nullable<Scope> = null;
         static mut promise_prototype: Nullable<Object> = null;
@@ -2496,6 +2496,14 @@ pub fn generate_module() -> WatModule {
             return new_number(floor!(value));
         }
 
+        fn Math_trunc(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let target: anyref = first_argument_or_null(arguments);
+            let number: Number = ToNumber(target);
+            let value: f64 = number.value;
+
+            return new_number(trunc!(value));
+        }
+
         fn create_function_prototype() -> Object {
             let object: Object = create_object();
 
@@ -2508,7 +2516,24 @@ pub fn generate_module() -> WatModule {
             set_property(object, data!("bind"),
                 create_property_function(global_scope as Scope, Function_bind, null));
 
+            set_property(object, data!("apply"),
+                create_property_function(global_scope as Scope, Function_apply, null));
+
             return object;
+        }
+
+        fn Function_apply(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let mut new_this: anyref = first_argument_or_null(arguments);
+            let mut args: Array = array_from(second_argument_or_null(arguments));
+            let mut args_data: AnyrefArray = args.array;
+            let args_length: i32 = args.length;
+            let mut i: i32 = 0;
+
+            let new_args: JSArgs = [null; args_length];
+            array_copy(JSArgs, AnyrefArray, new_args, 0, args_data, 0, args_length);
+
+            // TODO: tail call
+            return call_function(this, new_this, new_args, null);
         }
 
         fn Function_call(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
@@ -6608,6 +6633,8 @@ pub fn generate_module() -> WatModule {
             set_property(Math, data!("floor"),
                 create_property_function(global_scope as Scope, Math_floor, null));
 
+            set_property(Math, data!("trunc"),
+                create_property_function(global_scope as Scope, Math_trunc, null));
         }
 
         fn install_globals() {

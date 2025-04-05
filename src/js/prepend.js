@@ -36,6 +36,8 @@ Error.prototype.toString = function () {
     value: iteratorFunction
   });
 
+  const floor = Math.floor;
+  const trunc = Math.trunc;
   const wrapArray = function(maybeArray) {
     if (Array.isArray(maybeArray)) {
       return maybeArray;
@@ -101,6 +103,17 @@ Error.prototype.toString = function () {
   const toIndexedObject = function(it) { return IndexedObject(requireObjectCoercible(it)); };
   const toString = JAWSM.ToString;
   const arraySlice = function(arr, start, end) { arr.slice(start, end); };
+  const toIntegerOrInfinity = function (argument) {
+    var number = +argument;
+    return number !== number || number === 0 ? 0 : trunc(number);
+  };
+  const arrayFromConstructorAndList = function (Constructor, list, $length) {
+    var index = 0;
+    var length = arguments.length > 2 ? $length : lengthOfArrayLike(list);
+    var result = new Constructor(length);
+    while (length > index) result[index] = list[index++];
+    return result;
+  };
 
   // Copyright (c) 2014-2025 Denis Pushkarev
   // MIT license
@@ -238,8 +251,6 @@ Error.prototype.toString = function () {
     }
     return targetIndex;
   };
-
-  const floor = Math.floor;
 
   const sort = function (array, comparefn) {
     var length = array.length;
@@ -444,6 +455,12 @@ Error.prototype.toString = function () {
     }
   });
 
+  Object.defineProperty(Array.prototype, "values", {
+    value: function() {
+      return this[Symbol.iterator];
+    }
+  });
+
   Object.defineProperty(Array.prototype, "fill", {
     value: function(value /* , start = 0, end = @length */) {
       var O = toObject(this);
@@ -615,6 +632,114 @@ Error.prototype.toString = function () {
       while (index < arrayLength) deletePropertyOrThrow(array, index++);
 
       return array;
+    }
+  });
+
+  // `Array.prototype.splice` method
+  // https://tc39.es/ecma262/#sec-array.prototype.splice
+  Object.defineProperty(Array.prototype, "splice", {
+    value: function splice(start, deleteCount /* , ...items */) {
+      var O = toObject(this);
+      var len = lengthOfArrayLike(O);
+      var actualStart = toAbsoluteIndex(start, len);
+      var argumentsLength = arguments.length;
+      var insertCount, actualDeleteCount, A, k, from, to;
+      if (argumentsLength === 0) {
+        // TODO: the form below failed
+        //insertCount = actualDeleteCount = 0;
+        insertCount = 0;
+        actualDeleteCount = 0;
+      } else if (argumentsLength === 1) {
+        insertCount = 0;
+        actualDeleteCount = len - actualStart;
+      } else {
+        insertCount = argumentsLength - 2;
+        actualDeleteCount = min(max(toIntegerOrInfinity(deleteCount), 0), len - actualStart);
+      }
+      doesNotExceedSafeInteger(len + insertCount - actualDeleteCount);
+      A = arraySpeciesCreate(O, actualDeleteCount);
+      for (k = 0; k < actualDeleteCount; k++) {
+        from = actualStart + k;
+        if (from in O) createProperty(A, k, O[from]);
+      }
+      A.length = actualDeleteCount;
+      if (insertCount < actualDeleteCount) {
+        for (k = actualStart; k < len - actualDeleteCount; k++) {
+          from = k + actualDeleteCount;
+          to = k + insertCount;
+          if (from in O) O[to] = O[from];
+          else deletePropertyOrThrow(O, to);
+        }
+        for (k = len; k > len - actualDeleteCount + insertCount; k--) deletePropertyOrThrow(O, k - 1);
+      } else if (insertCount > actualDeleteCount) {
+        for (k = len - actualDeleteCount; k > actualStart; k--) {
+          from = k + actualDeleteCount - 1;
+          to = k + insertCount - 1;
+          if (from in O) O[to] = O[from];
+          else deletePropertyOrThrow(O, to);
+        }
+      }
+      for (k = 0; k < insertCount; k++) {
+        O[k + actualStart] = arguments[k + 2];
+      }
+      setArrayLength(O, len - actualDeleteCount + insertCount);
+      return A;
+    }
+  });
+
+  // `Array.prototype.toReversed` method
+  // https://tc39.es/ecma262/#sec-array.prototype.toReversed
+  Object.defineProperty(Array.prototype, "toReversed", {
+    value: function() {
+      var O = toObject(this);
+      var len = lengthOfArrayLike(O);
+      var A = arraySpeciesCreate(O, len);
+
+      let i = 0;
+      while (i < len) {
+        A[len - 1 - i] = O[i];
+        i++;
+      }
+
+      return A;
+    }
+  });
+
+  // `Array.prototype.toSorted` method
+  // https://tc39.es/ecma262/#sec-array.prototype.toSorted
+  Object.defineProperty(Array.prototype, "toSorted", {
+    value: function toSorted(compareFn) {
+      if (compareFn !== undefined) aCallable(compareFn);
+      var O = toIndexedObject(this);
+      var A = arrayFromConstructorAndList(Array, O);
+      return sort(A, getSortCompare(compareFn));
+    }
+  });
+
+  // `Array.prototype.toSpliced` method
+  // https://tc39.es/ecma262/#sec-array.prototype.toSpliced
+  Object.defineProperty(Array.prototype, "toSpliced", {
+    value: function toSpliced(start, deleteCount /* , ...items */) {
+      var O = toIndexedObject(this);
+      var A = arrayFromConstructorAndList(Array, O);
+      Array.prototype.splice.apply(A, arguments);
+      return A;
+    }
+  });
+
+  // `Array.prototype.with` method
+  // https://tc39.es/ecma262/#sec-array.prototype.with
+  Object.defineProperty(Array.prototype, "with", {
+    value: function(index, value) {
+      var O = toIndexedObject(this);
+      var len = lengthOfArrayLike(O);
+      var relativeIndex = toIntegerOrInfinity(index);
+      var actualIndex = relativeIndex < 0 ? len + relativeIndex : relativeIndex;
+      if (actualIndex >= len || actualIndex < 0) throw new $RangeError('Incorrect index');
+      var A = new Array(len);
+      var k = 0;
+      for (; k < len; k++) A[k] = k === actualIndex ? value : O[k];
+      return A;
     }
   });
 })();
