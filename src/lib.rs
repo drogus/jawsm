@@ -1246,8 +1246,8 @@ impl WasmTranslator {
             }
             Expression::ImportMeta => todo!(),
             Expression::Assign(assign) => self.translate_assign(assign),
-            Expression::Unary(unary) => self.translate_unary(unary),
-            Expression::Update(update) => self.translate_update(update),
+            Expression::Unary(unary) => self.translate_unary(unary, will_use_return),
+            Expression::Update(update) => self.translate_update(update, will_use_return),
             Expression::Binary(binary) => self.translate_binary(binary),
             Expression::BinaryInPrivate(_binary_in_private) => todo!(),
             Expression::Conditional(conditional) => self.translate_conditional(conditional),
@@ -2174,10 +2174,13 @@ impl WasmTranslator {
         ]
     }
 
-    fn translate_update(&mut self, update: &Update) -> InstructionsList {
+    fn translate_update(&mut self, update: &Update, will_use_return: bool) -> InstructionsList {
         use boa_ast::expression::operator::update::UpdateOp;
 
         let var = self.current_function().add_local("$var", WasmType::Anyref);
+        let var_pre = self
+            .current_function()
+            .add_local("$var_pre", WasmType::Anyref);
 
         let fetch_instructions = match update.target() {
             UpdateTarget::Identifier(identifier) => self.translate_identifier(identifier),
@@ -2202,7 +2205,6 @@ impl WasmTranslator {
             }
         };
 
-        // TODO: figure out pre vs post behaviour
         let instruction = match update.op() {
             UpdateOp::IncrementPost => W::call("$increment_number"),
             UpdateOp::IncrementPre => W::call("$increment_number"),
@@ -2210,12 +2212,24 @@ impl WasmTranslator {
             UpdateOp::DecrementPre => W::call("$decrement_number"),
         };
 
-        vec![
+        let mut result = vec![
             ..fetch_instructions,
+            W::local_tee(&var_pre),
             instruction,
             W::local_set(&var),
             ..save_instructions,
-        ]
+        ];
+
+        if will_use_return {
+            match update.op() {
+                UpdateOp::IncrementPre | UpdateOp::DecrementPre => result.push(W::local_get(&var)),
+                UpdateOp::IncrementPost | UpdateOp::DecrementPost => {
+                    result.push(W::local_get(&var_pre))
+                }
+            }
+        }
+
+        return result;
     }
 
     fn translate_assign(&mut self, assign: &Assign) -> InstructionsList {
@@ -2344,7 +2358,7 @@ impl WasmTranslator {
         }
     }
 
-    fn translate_unary(&mut self, unary: &Unary) -> InstructionsList {
+    fn translate_unary(&mut self, unary: &Unary, will_use_return: bool) -> InstructionsList {
         use boa_ast::expression::operator::unary::UnaryOp;
 
         if let UnaryOp::TypeOf = unary.op() {
@@ -2385,10 +2399,9 @@ impl WasmTranslator {
                     }
                 }
                 _ => {
-                    // JavaScript let's you use any expression with delete, but if
-                    // it's not property access it just does nothing ¯\_(ツ)_/¯
-                    // so we evaluate, but drop the value
-                    instructions.push(W::Drop);
+                    if !will_use_return {
+                        instructions.push(W::Drop);
+                    }
                 }
             }
             instructions

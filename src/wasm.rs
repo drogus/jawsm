@@ -1726,6 +1726,27 @@ pub fn generate_module() -> WatModule {
             return val2;
         }
 
+        fn max(val1: f64, val2: f64) -> f64 {
+            if val1 > val2 {
+                return val1;
+            }
+            return val2;
+        }
+
+        fn min_num(val1: Number, val2: Number) -> Number {
+            if val1.value < val2.value {
+                return val1;
+            }
+            return val2;
+        }
+
+        fn max_num(val1: Number, val2: Number) -> Number {
+            if val1.value > val2.value {
+                return val1;
+            }
+            return val2;
+        }
+
         fn JAWSM_DoesNotExceedSafeInteger(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
             return DoesNotExceedSafeInteger(first_argument_or_null(arguments) as Number);
         }
@@ -1758,6 +1779,19 @@ pub fn generate_module() -> WatModule {
             }
 
             return new_number(0 as f64);
+        }
+
+        fn JAWSM_ToAbsoluteIndex(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return ToAbsoluteIndex(first_argument_or_null(arguments), second_argument_or_null(arguments) as Number);
+        }
+
+        fn ToAbsoluteIndex(index: anyref, length: Number) -> Number {
+            let integer: Number = ToIntegerOrInfinity(index);
+            if integer.value < 0 as f64 {
+                return new_number(max(integer.value + length.value, 0 as f64));
+            }
+
+            return min_num(integer, length);
         }
 
         fn ToIntegerOrInfinity(value: anyref) -> Number {
@@ -4515,7 +4549,7 @@ pub fn generate_module() -> WatModule {
         }
 
         fn get_property_or_array_value(target: anyref, prop_name: anyref) -> anyref {
-            if ref_test!(target, Array) {
+            if ref_test!(target, Array) && !ref_test!(prop_name, Symbol) {
                 let index: Number = ToNumber(prop_name);
 
                 if !is_nan(index) && !is_infinity(index) && is_integer(index) {
@@ -6441,6 +6475,8 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, JAWSM_LengthOfArrayLike, null));
             set_property(JAWSM, data!("DoesNotExceedSafeInteger"),
                 create_property_function(global_scope as Scope, JAWSM_DoesNotExceedSafeInteger, null));
+            set_property(JAWSM, data!("ToAbsoluteIndex"),
+                create_property_function(global_scope as Scope, JAWSM_ToAbsoluteIndex, null));
         }
 
         fn install_globals() {
