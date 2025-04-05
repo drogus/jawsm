@@ -87,9 +87,8 @@ Error.prototype.toString = function () {
       return 'Object';
     }
   };
-  const min = function(arg1, arg2) {
-    return arg1 <= arg2 ? arg1 : arg2;
-  };
+  const min = function(arg1, arg2) { return arg1 <= arg2 ? arg1 : arg2; };
+  const max = function(arg1, arg2) { return arg1 >= arg2 ? arg1 : arg2; };
   const aCallable = function (argument) {
     if (isCallable(argument)) return argument;
     throw new $TypeError(tryToString(argument) + ' is not a function');
@@ -100,6 +99,8 @@ Error.prototype.toString = function () {
   };
   const isNullOrUndefined = function(it) { return it === null || it === undefined; };
   const toIndexedObject = function(it) { return IndexedObject(requireObjectCoercible(it)); };
+  const toString = JAWSM.ToString;
+  const arraySlice = function(arr, start, end) { arr.slice(start, end); };
 
   // Copyright (c) 2014-2025 Denis Pushkarev
   // MIT license
@@ -236,6 +237,44 @@ Error.prototype.toString = function () {
       sourceIndex++;
     }
     return targetIndex;
+  };
+
+  const floor = Math.floor;
+
+  const sort = function (array, comparefn) {
+    var length = array.length;
+
+    if (length < 8) {
+      // insertion sort
+      var i = 1;
+      var element, j;
+
+      while (i < length) {
+        j = i;
+        element = array[i];
+        while (j && comparefn(array[j - 1], element) > 0) {
+          array[j] = array[--j];
+        }
+        if (j !== i++) array[j] = element;
+      }
+    } else {
+      // merge sort
+      var middle = floor(length / 2);
+      var left = sort(arraySlice(array, 0, middle), comparefn);
+      var right = sort(arraySlice(array, middle), comparefn);
+      var llength = left.length;
+      var rlength = right.length;
+      var lindex = 0;
+      var rindex = 0;
+
+      while (lindex < llength || rindex < rlength) {
+        array[lindex + rindex] = (lindex < llength && rindex < rlength)
+          ? comparefn(left[lindex], right[rindex]) <= 0 ? left[lindex++] : right[rindex++]
+          : lindex < llength ? left[lindex++] : right[rindex++];
+      }
+    }
+
+    return array;
   };
 
   let includes = createIncludesMethod(true);
@@ -525,5 +564,57 @@ Error.prototype.toString = function () {
       }
       return len + argCount;
      }
+  });
+
+  // `Array.prototype.slice` method
+  // https://tc39.es/ecma262/#sec-array.prototype.slice
+  Object.defineProperty(Array.prototype, "slice", {
+    value: function slice(start, end) {
+      var O = toIndexedObject(this);
+      var length = lengthOfArrayLike(O);
+      var k = toAbsoluteIndex(start, length);
+      var fin = toAbsoluteIndex(end === undefined ? length : end, length);
+      result = arraySpeciesCreate(this, max(fin - k, 0));
+      for (n = 0; k < fin; k++, n++) if (k in O) createProperty(result, n, O[k]);
+      result.length = n;
+      return result;
+    }
+  });
+
+  var getSortCompare = function (comparefn) {
+    return function (x, y) {
+      if (y === undefined) return -1;
+      if (x === undefined) return 1;
+      if (comparefn !== undefined) return +comparefn(x, y) || 0;
+      return toString(x) > toString(y) ? 1 : -1;
+    };
+  };
+
+  // `Array.prototype.sort` method
+  // https://tc39.es/ecma262/#sec-array.prototype.sort
+  Object.defineProperty(Array.prototype, "sort", {
+    value: function(comparefn) {
+      if (comparefn !== undefined) aCallable(comparefn);
+
+      var array = toObject(this);
+
+      var items = [];
+      var arrayLength = lengthOfArrayLike(array);
+      var itemsLength, index;
+
+      for (index = 0; index < arrayLength; index++) {
+        if (index in array) push(items, array[index]);
+      }
+
+      sort(items, getSortCompare(comparefn));
+
+      itemsLength = lengthOfArrayLike(items);
+      index = 0;
+
+      while (index < itemsLength) array[index] = items[index++];
+      while (index < arrayLength) deletePropertyOrThrow(array, index++);
+
+      return array;
+    }
   });
 })();

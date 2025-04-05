@@ -849,6 +849,10 @@ pub fn generate_module() -> WatModule {
             return Array_join(scope, this, create_arguments_1(create_string_from_array(",")), meta);
         }
 
+        fn JAWSM_ToString(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            return ToString(first_argument_or_null(arguments));
+        }
+
         fn ToString(target: anyref) -> String {
             if ref_test!(target, String) {
                 return target as String;
@@ -1719,6 +1723,13 @@ pub fn generate_module() -> WatModule {
             return number;
         }
 
+        fn min_i32(val1: i32, val2: i32) -> i32 {
+            if val1 < val2 {
+                return val1;
+            }
+            return val2;
+        }
+
         fn min(val1: f64, val2: f64) -> f64 {
             if val1 < val2 {
                 return val1;
@@ -2475,6 +2486,14 @@ pub fn generate_module() -> WatModule {
             set_property_value(this, data!("name"), new_static_string(data!("SyntaxError"), 11));
 
             return this;
+        }
+
+        fn Math_floor(scope: Scope, this: anyref, arguments: JSArgs, meta: anyref) -> anyref {
+            let target: anyref = first_argument_or_null(arguments);
+            let number: Number = ToNumber(target);
+            let value: f64 = number.value;
+
+            return new_number(floor!(value));
         }
 
         fn create_function_prototype() -> Object {
@@ -4553,6 +4572,9 @@ pub fn generate_module() -> WatModule {
                 let index: Number = ToNumber(prop_name);
 
                 if !is_nan(index) && !is_infinity(index) && is_integer(index) {
+                    if index.value < 0 as f64 {
+                        return null;
+                    }
                     return get_array_element(target, index.value as i32);
                 }
             }
@@ -5721,50 +5743,43 @@ pub fn generate_module() -> WatModule {
         }
 
         fn logical_or(arg1: anyref, arg2: anyref) -> anyref {
-            if ref_test!(arg1, i31ref) {
-                let val: i32;
-                if ref_test!(arg1, null) {
-                    val = 0;
-                } else {
-                    val = arg1 as i31ref as i32;
-                }
-                if val != 0 && val != 2 {
-                    return arg1;
-                }
+            let bool1: i31ref = ToBoolean(arg1);
+            let bool2: i31ref = ToBoolean(arg2);
+
+            if is_false(bool1) {
+                return arg2;
             }
 
-            return arg2;
-        }
-
-        fn logical_and(arg1: anyref, arg2: anyref) -> anyref {
-            // TODO: handle numbers properly - 0 is false
-            if ref_test!(arg1, null) {
+            if is_false(bool2) {
                 return arg1;
             }
 
-            if ref_test!(arg1, i31ref) {
-                let val: i32 = arg1 as i31ref as i32;
-                if val == 0 || val == 2 {
-                    return arg1;
-                }
+            return arg1;
+        }
+
+        fn logical_and(arg1: anyref, arg2: anyref) -> anyref {
+            let bool1: i31ref = ToBoolean(arg1);
+            let bool2: i31ref = ToBoolean(arg2);
+
+            if is_false(bool1) {
+                return arg1;
+            }
+
+            if is_false(bool2) {
+                return arg2;
             }
 
             return arg2;
         }
 
         fn logical_not(arg: anyref) -> i31ref {
-            if ref_test!(arg, null) {
-                return 1 as i31ref;
+            let bool: i31ref = ToBoolean(arg);
+
+            if is_true(bool) {
+                return 0 as i31ref;
             }
 
-            if ref_test!(arg, i31ref) {
-                let val: i32 = arg as i31ref as i32;
-                if val == 0 || val == 2 {
-                    return 1 as i31ref;
-                }
-            }
-
-            return 0 as i31ref;
+            return 1 as i31ref;
         }
 
         fn type_of(arg: anyref) -> StaticString {
@@ -5799,44 +5814,149 @@ pub fn generate_module() -> WatModule {
             return new_static_string(data!("undefined"), 9);
         }
 
-        fn less_than_or_equal(arg1: anyref, arg2: anyref) -> i31ref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: i32 = num1.value <= num2.value;
-                return result as i31ref;
+        fn IsStringPrefix(prefix: String, str: String) -> i32 {
+            let prefix_len: i32 = prefix.length as i32;
+            let str_len: i32 = str.length as i32;
+            let prefix_data: I32Array = prefix.data;
+            let str_data: I32Array = str.data;
+
+            if prefix_len > str_len {
+                return 0;
             }
-            return 0 as i31ref;
+
+            let i: i32 = 0;
+            while i < prefix_len {
+                if prefix_data[i] != str_data[i] {
+                    return 0;
+                }
+                i += 1;
+            }
+
+            return 1;
+        }
+
+        // https://262.ecma-international.org/13.0/#sec-islessthan
+        fn IsLessThan(x: anyref, y: anyref, left_first: i32) -> i32 {
+            let mut px: anyref;
+            let mut py: anyref;
+            let mut strx: String = create_empty_string();
+            let mut stry: String = create_empty_string();
+            let mut strx_data: I32Array = [0; 0];
+            let mut stry_data: I32Array = [0; 0];
+            let mut i: i32;
+            let mut stop: i32;
+            let mut bi: Nullable<BigInt>;
+            let mut nx: anyref;
+            let mut ny: anyref;
+
+            if left_first {
+                px = ToPrimitive(x, TO_PRIMITIVE_NUMBER);
+                py = ToPrimitive(y, TO_PRIMITIVE_NUMBER);
+            } else {
+                py = ToPrimitive(y, TO_PRIMITIVE_NUMBER);
+                px = ToPrimitive(x, TO_PRIMITIVE_NUMBER);
+            }
+
+            if ref_test!(px, String) && ref_test!(py, String) {
+                strx = px as String;
+                stry = py as String;
+                if IsStringPrefix(stry, strx) {
+                    return 0;
+                }
+                if IsStringPrefix(strx, stry) {
+                    return 1;
+                }
+                strx_data = strx.data;
+                stry_data = stry.data;
+                i = 0;
+                stop = min_i32(strx.length, stry.length);
+                while i < stop {
+                    if strx_data[i] != stry_data[i] {
+                        return strx_data[i] < stry_data[i];
+                    }
+                    i += 1;
+                }
+                throw!(JSException, create_string_from_array("IsLessThan string comparison: this point should be unreachable"));
+            }
+
+            if ref_test!(px, BigInt) && ref_test!(py, String) {
+                // TODO: this should be StringToBigInt, and it should be able to return undefined
+                // rather than throw
+                bi = ToBigInt(py);
+                if ref_test!(bi, null) {
+                    return 0;
+                }
+
+                throw!(JSException, create_string_from_array("not implemented: BigInt::lessThan"));
+            }
+
+            if ref_test!(px, String) && ref_test!(py, BigInt) {
+                // TODO: this should be StringToBigInt, and it should be able to return undefined
+                // rather than throw
+                bi = ToBigInt(px);
+                if ref_test!(bi, null) {
+                    return 0;
+                }
+
+                throw!(JSException, create_string_from_array("not implemented: BigInt::lessThan"));
+            }
+
+            nx = ToNumeric(px);
+            ny = ToNumeric(py);
+
+            if ref_test!(nx, Number) && ref_test!(ny, Number) {
+                return Number_lessThan(nx as Number, ny as Number);
+            }
+
+            throw!(JSException, create_string_from_array("not implemented: comparing bigints and numbers"));
+        }
+
+        fn Number_lessThan(x: Number, y: Number) -> i32 {
+            // The spec says that we should return undefined, but browsers return false, so let's
+            // simplify that too
+            if is_nan(x) || is_nan(y) {
+                return 0;
+            }
+
+            if x.value == f64::INFINITY {
+                return 0;
+            }
+
+            if y.value == f64::INFINITY {
+                return 1;
+            }
+
+            if y.value == f64::NEG_INFINITY {
+                return 0;
+            }
+
+            if x.value == f64::NEG_INFINITY {
+                return 1;
+            }
+
+            return x.value < y.value;
+        }
+
+        fn less_than_or_equal(arg1: anyref, arg2: anyref) -> i31ref {
+            // a <= b is the same as !(a > b)
+            let result: i32 = !IsLessThan(arg2, arg1, 0);
+            return result as i31ref;
         }
 
         fn less_than(arg1: anyref, arg2: anyref) -> i31ref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: i32 = num1.value < num2.value;
-                return result as i31ref;
-            }
-            return 0 as i31ref;
+            let result: i32 = IsLessThan(arg1, arg2, 1);
+            return result as i31ref;
         }
 
         fn greater_than(arg1: anyref, arg2: anyref) -> i31ref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: i32 = num1.value > num2.value;
-                return result as i31ref;
-            }
-            return 0 as i31ref;
+            let result: i32 = IsLessThan(arg2, arg1, 0);
+            return result as i31ref;
         }
 
         fn greater_than_or_equal(arg1: anyref, arg2: anyref) -> i31ref {
-            if ref_test!(arg1, Number) && ref_test!(arg2, Number) {
-                let num1: Number = arg1 as Number;
-                let num2: Number = arg2 as Number;
-                let result: i32 = num1.value >= num2.value;
-                return result as i31ref;
-            }
-            return 0 as i31ref;
+            // a >= b is the same as !(a < b)
+            let result: i32 = !IsLessThan(arg1, arg2, 1);
+            return result as i31ref;
         }
 
         fn increment_number(arg1: anyref) -> anyref {
@@ -6477,12 +6597,24 @@ pub fn generate_module() -> WatModule {
                 create_property_function(global_scope as Scope, JAWSM_DoesNotExceedSafeInteger, null));
             set_property(JAWSM, data!("ToAbsoluteIndex"),
                 create_property_function(global_scope as Scope, JAWSM_ToAbsoluteIndex, null));
+            set_property(JAWSM, data!("ToString"),
+                create_property_function(global_scope as Scope, JAWSM_ToString, null));
+        }
+
+        fn setup_math_namespace() {
+            let Math: anyref = create_object();
+            declare_variable(global_scope as Scope, data!("Math"), Math, VARIABLE_CONST);
+
+            set_property(Math, data!("floor"),
+                create_property_function(global_scope as Scope, Math_floor, null));
+
         }
 
         fn install_globals() {
             global_scope = new_scope(null);
 
             setup_jawsm_global_object();
+            setup_math_namespace();
 
             let promise_constructor: Function = new_function(global_scope as Scope, Promise_constructor, null);
             let generator_constructor: Function = new_function(global_scope as Scope, Generator_constructor, null);
