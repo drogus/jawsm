@@ -15,7 +15,7 @@ If you want to see it happen, please consider [sponsoring my work](https://githu
 
 ### What works
 
-As I eventually want to implement 100% of the language, I'm purposefully focused on implementing the parts of the language that are the hardest to implement rather than go for a large number of simpler features.
+At the moment JAWSM passes about 25% of test262 test suite.
 
 When I started the project I listed four features of the language that I think are crucial to implement in order to test the viability of the project
 
@@ -32,23 +32,23 @@ A non exhaustive list of other stuff that should work:
 * all of the loops: `do..while`, `while`, `for`, `for..in`, `for..of`
 * `switch` statement
 * limited support for `break` and `continue` (it works, but may be buggy)
-* string lierals, adding string literals
+* string literals, adding string literals
 * numbers and basic operators (`+`, `-`, `*`, `/`)
 * booleans and basic boolean operators
-* array literals
+* arrays and most of the Array related functions
 * object literals
 * `new` keyword
 * `async` and `await`
 * limited support from `Promise` APIs
 * generator functions
 * `try`/`catch`
+* very basic BigInt support
 
 A few notable things that are missing at the moment:
 
 * most of the builtins and most of the methods on existing builtins
 * RegExp expressions
-* BigInt literals
-* a lot of edge cases are not handled yet, for example equality comparison works only for the simplest cases
+* BigInt arithmetic
 
 ### Host requirements
 
